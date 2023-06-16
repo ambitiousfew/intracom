@@ -252,11 +252,11 @@ func TestNewBoolTyped(t *testing.T) {
 func TestNewStringTyped(t *testing.T) {
 	ic := New[string]()
 
-	want := reflect.TypeOf(&Intracom[string]{})
-	got := reflect.TypeOf(ic)
+	want := reflect.TypeOf(&Intracom[string]{}).String()
+	got := reflect.TypeOf(ic).String()
 
 	if want != got {
-		t.Errorf("want %T: got %T", want, t)
+		t.Errorf("want %s: got %s", want, got)
 	}
 
 }
@@ -264,11 +264,11 @@ func TestNewStringTyped(t *testing.T) {
 func TestNewIntTyped(t *testing.T) {
 	ic := New[int]()
 
-	want := reflect.TypeOf(&Intracom[int]{})
-	got := reflect.TypeOf(ic)
+	want := reflect.TypeOf(&Intracom[int]{}).String()
+	got := reflect.TypeOf(ic).String()
 
 	if want != got {
-		t.Errorf("want %T: got %T", want, t)
+		t.Errorf("want %s: got %s", want, got)
 	}
 
 }
@@ -276,11 +276,11 @@ func TestNewIntTyped(t *testing.T) {
 func TestNewByteTyped(t *testing.T) {
 	ic := New[[]byte]()
 
-	want := reflect.TypeOf(&Intracom[[]byte]{})
-	got := reflect.TypeOf(ic)
+	want := reflect.TypeOf(&Intracom[[]byte]{}).String()
+	got := reflect.TypeOf(ic).String()
 
 	if want != got {
-		t.Errorf("want %T: got %T", want, t)
+		t.Errorf("want %ss: got %s", want, got)
 	}
 
 }
