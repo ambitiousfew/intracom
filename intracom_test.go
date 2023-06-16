@@ -240,11 +240,11 @@ func TestIntracomClose(t *testing.T) {
 func TestNewBoolTyped(t *testing.T) {
 	ic := New[bool]()
 
-	want := reflect.TypeOf(&Intracom[bool]{})
-	got := reflect.TypeOf(ic)
+	want := reflect.TypeOf(&Intracom[bool]{}).String()
+	got := reflect.TypeOf(ic).String()
 
 	if want != got {
-		t.Errorf("want %T: got %T", want, t)
+		t.Errorf("want %s: got %s", want, got)
 	}
 
 }
