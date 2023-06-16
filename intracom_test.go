@@ -280,7 +280,7 @@ func TestNewByteTyped(t *testing.T) {
 	got := reflect.TypeOf(ic).String()
 
 	if want != got {
-		t.Errorf("want %ss: got %s", want, got)
+		t.Errorf("want %s: got %s", want, got)
 	}
 
 }
