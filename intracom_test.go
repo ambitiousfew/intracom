@@ -240,7 +240,7 @@ func TestIntracomClose(t *testing.T) {
 func TestNewBoolTyped(t *testing.T) {
 	ic := New[bool]()
 
-	want := reflect.TypeOf(&Intracom[bool]{}).String()
+	want := reflect.TypeOf(new(Intracom[bool])).String()
 	got := reflect.TypeOf(ic).String()
 
 	if want != got {
@@ -252,7 +252,7 @@ func TestNewBoolTyped(t *testing.T) {
 func TestNewStringTyped(t *testing.T) {
 	ic := New[string]()
 
-	want := reflect.TypeOf(&Intracom[string]{}).String()
+	want := reflect.TypeOf(new(Intracom[string])).String()
 	got := reflect.TypeOf(ic).String()
 
 	if want != got {
@@ -264,7 +264,7 @@ func TestNewStringTyped(t *testing.T) {
 func TestNewIntTyped(t *testing.T) {
 	ic := New[int]()
 
-	want := reflect.TypeOf(&Intracom[int]{}).String()
+	want := reflect.TypeOf(new(Intracom[int])).String()
 	got := reflect.TypeOf(ic).String()
 
 	if want != got {
@@ -276,7 +276,7 @@ func TestNewIntTyped(t *testing.T) {
 func TestNewByteTyped(t *testing.T) {
 	ic := New[[]byte]()
 
-	want := reflect.TypeOf(&Intracom[[]byte]{}).String()
+	want := reflect.TypeOf(new(Intracom[[]byte])).String()
 	got := reflect.TypeOf(ic).String()
 
 	if want != got {
