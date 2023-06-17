@@ -39,8 +39,20 @@ func (i *Intracom[T]) Subscribe(topic, consumerID string) <-chan T {
 	}
 
 	if subCh, exists := subs[consumerID]; exists {
+		if msg != nil {
+			// multiple resubscribes returns the same channel and places the last message into the buffer.
+			select {
+			case subCh <- *i.lastMessage[topic]:
+				// attempt to place the last message into the channel buffer.
+				// if it blocks for any amount of time we fall into default case.
+				return subCh
+			default:
+				// if there was already a last message in the buffer, just return the channel.
+				return subCh
+			}
+
+		}
 		// if the same consumerID tries to subscribe more than once, always return the existing channel.
-		subCh <- *i.lastMessage[topic]
 		return subCh
 	}
 
