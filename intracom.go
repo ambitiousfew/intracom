@@ -40,6 +40,7 @@ func (i *Intracom[T]) Subscribe(topic, consumerID string) <-chan T {
 
 	if subCh, exists := subs[consumerID]; exists {
 		// if the same consumerID tries to subscribe more than once, always return the existing channel.
+		subCh <- *i.lastMessage[topic]
 		return subCh
 	}
 
