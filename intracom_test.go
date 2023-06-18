@@ -117,18 +117,53 @@ func TestLastMessageSubscribers(t *testing.T) {
 	}
 }
 
-func TestMultipleSubscribes(t *testing.T) {
-	ic := New[bool]()
+func TestMultipleSubscribesWithPublish(t *testing.T) {
+	ic := New[string]()
 
 	topic := "test-topic"
 	id := "test"
 
-	// subscribe and we should receive an immediate message if there is a message in the last message map
-	want := ic.Subscribe(topic, id)
-	got := ic.Subscribe(topic, id)
+	ch1 := ic.Subscribe(topic, id)
+	ic.Publish(topic, "hello1")
+	msg1 := <-ch1
 
-	if want != got {
+	ch1Copy := ic.Subscribe(topic, id)
+	msg2 := <-ch1Copy
+
+	ic.Publish(topic, "hello2")
+	ch2 := ic.Subscribe(topic, id)
+
+	if ch1 != ch2 && ch1 != ch1Copy && ch2 != ch1Copy {
 		t.Errorf("subscribing with the same topic and id resulted in different channel")
+	}
+
+	if msg1 != msg2 {
+		t.Errorf("subscribing multiple times didn't return the same last message: want %s, got %s", msg1, msg2)
+	}
+}
+
+func TestMultipleSubscribesWithoutPublish(t *testing.T) {
+	ic := New[string]()
+
+	topic := "test-topic"
+	id := "test"
+
+	ch1 := ic.Subscribe(topic, id)
+	ch1Copy := ic.Subscribe(topic, id)
+
+	if ch1 != ch1Copy {
+		t.Errorf("subscribing with the same topic and id resulted in different channel")
+	}
+
+	select {
+	case <-ch1:
+		t.Errorf("subscribing without publish should not receive any last published message for ch1")
+	case <-ch1Copy:
+		t.Errorf("subscribing without publish should not receive any last published message for ch1Copy")
+	default:
+		// we should hit this case
+		return
+
 	}
 }
 
