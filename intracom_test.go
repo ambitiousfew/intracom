@@ -11,7 +11,7 @@ func TestSubscribe(t *testing.T) {
 	topic := "test-topic"
 	id := "test"
 
-	ch := ic.Subscribe(topic, id)
+	ch := ic.Subscribe(topic, id, 1)
 	defer ic.Unsubscribe(topic, id)
 
 	want := true
@@ -46,7 +46,7 @@ func TestUnsubscribe(t *testing.T) {
 
 	topic := "test-topic"
 	id := "test"
-	ic.Subscribe(topic, id)
+	ic.Subscribe(topic, id, 1)
 	ic.Unsubscribe(topic, id)
 
 	want := true
@@ -98,7 +98,7 @@ func TestLastMessageSubscribers(t *testing.T) {
 	// publish first so the message is stored in the last message maps topic.
 	ic.Publish(topic, msg)
 	// subscribe and we should receive an immediate message if there is a message in the last message map
-	ch := ic.Subscribe(topic, id)
+	ch := ic.Subscribe(topic, id, 1)
 
 	want, exists := ic.lastMessage[topic]
 	if !exists {
@@ -123,15 +123,15 @@ func TestMultipleSubscribesWithPublish(t *testing.T) {
 	topic := "test-topic"
 	id := "test"
 
-	ch1 := ic.Subscribe(topic, id)
+	ch1 := ic.Subscribe(topic, id, 1)
 	ic.Publish(topic, "hello1")
 	msg1 := <-ch1
 
-	ch1Copy := ic.Subscribe(topic, id)
+	ch1Copy := ic.Subscribe(topic, id, 1)
 	msg2 := <-ch1Copy
 
 	ic.Publish(topic, "hello2")
-	ch2 := ic.Subscribe(topic, id)
+	ch2 := ic.Subscribe(topic, id, 1)
 
 	if ch1 != ch2 && ch1 != ch1Copy && ch2 != ch1Copy {
 		t.Errorf("subscribing with the same topic and id resulted in different channel")
@@ -148,8 +148,8 @@ func TestMultipleSubscribesWithoutPublish(t *testing.T) {
 	topic := "test-topic"
 	id := "test"
 
-	ch1 := ic.Subscribe(topic, id)
-	ch1Copy := ic.Subscribe(topic, id)
+	ch1 := ic.Subscribe(topic, id, 1)
+	ch1Copy := ic.Subscribe(topic, id, 1)
 
 	if ch1 != ch1Copy {
 		t.Errorf("subscribing with the same topic and id resulted in different channel")
@@ -174,7 +174,7 @@ func TestMultipleUnSubscribes(t *testing.T) {
 	id := "test"
 
 	// subscribe and we should receive an immediate message if there is a message in the last message map
-	ic.Subscribe(topic, id)
+	ic.Subscribe(topic, id, 1)
 
 	consumer, found := ic.channels[topic]
 	if !found {
@@ -206,7 +206,7 @@ func TestUnsubscribeNonExistent(t *testing.T) {
 	id := "test"
 
 	// subscribe and we should receive an immediate message if there is a message in the last message map
-	ic.Subscribe(topic, id)
+	ic.Subscribe(topic, id, 1)
 	ic.Unsubscribe(notTopic, id)
 
 	if _, exists := ic.channels[topic]; !exists {
@@ -225,7 +225,7 @@ func TestPubSub(t *testing.T) {
 	want := true
 
 	// subscribe and we should receive an immediate message if there is a message in the last message map
-	ch := ic.Subscribe(topic, id)
+	ch := ic.Subscribe(topic, id, 1)
 	defer ic.Unsubscribe(topic, id)
 
 	ic.Publish(topic, want)
@@ -247,7 +247,7 @@ func TestIntracomClose(t *testing.T) {
 	want := true
 
 	// subscribe and we should receive an immediate message if there is a message in the last message map
-	ic.Subscribe(topic, id)
+	ic.Subscribe(topic, id, 1)
 	defer ic.Unsubscribe(topic, id)
 
 	if _, exists := ic.channels[topic]; !exists {

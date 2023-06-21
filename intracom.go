@@ -20,10 +20,16 @@ func New[T any]() *Intracom[T] {
 	}
 }
 
-func (i *Intracom[T]) Subscribe(topic, consumerID string) <-chan T {
+func (i *Intracom[T]) Subscribe(topic, consumerID string, chanSize int) <-chan T {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	ch := make(chan T, 1)
+
+	if chanSize < 0 {
+		// do not allow negative channel sizes, though we may want to allow unbuffered.
+		chanSize = 0
+	}
+
+	ch := make(chan T, chanSize)
 
 	subs, exists := i.channels[topic]
 	if !exists {
