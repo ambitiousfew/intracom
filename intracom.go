@@ -91,7 +91,10 @@ func (i *Intracom[T]) Publish(topic string, message T) {
 	defer i.mu.Unlock()
 
 	for _, ch := range i.channels[topic] {
-		ch <- message
+		select {
+		case ch <- message:
+		default:
+		}
 	}
 
 	// store the published message as the previous message sent
