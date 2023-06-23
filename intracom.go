@@ -21,15 +21,13 @@ func New[T any]() *Intracom[T] {
 }
 
 func (i *Intracom[T]) Subscribe(topic, consumerID string, chanSize int) <-chan T {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-
 	if chanSize < 0 {
 		// do not allow negative channel sizes, though we may want to allow unbuffered.
 		chanSize = 0
 	}
 
-	ch := make(chan T, chanSize)
+	i.mu.Lock()
+	defer i.mu.Unlock()
 
 	subs, exists := i.channels[topic]
 	if !exists {
@@ -37,11 +35,15 @@ func (i *Intracom[T]) Subscribe(topic, consumerID string, chanSize int) <-chan T
 		i.channels[topic] = make(map[string]chan T)
 	}
 
+	ch := make(chan T, chanSize)
 	msg := i.lastMessage[topic]
 
 	if msg != nil {
-		// if there is a previously stored message for this topic, send it upon subscribe.
-		ch <- *msg
+		// if there is a previously stored message for this topic, try to send it upon subscribe.
+		select {
+		case ch <- *msg:
+		default:
+		}
 	}
 
 	if subCh, exists := subs[consumerID]; exists {
