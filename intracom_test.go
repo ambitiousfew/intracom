@@ -3,6 +3,7 @@ package intracom
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestSubscribe(t *testing.T) {
@@ -16,21 +17,22 @@ func TestSubscribe(t *testing.T) {
 
 	want := true
 
-	consumers, topicExists := ic.channels[topic]
+	channel, topicExists := ic.manager.get(topic)
 	if !topicExists {
 		t.Errorf("want %v: got %v", want, topicExists)
 		return
 	}
 
-	_, chanExists := consumers[id]
+	_, chanExists := channel.get(id)
 
 	if !chanExists {
 		t.Errorf("want %v: got %v", want, chanExists)
 		return
 	}
 
-	if len(consumers) != 1 {
-		t.Errorf("want %d: got %d", 1, len(consumers))
+	size := channel.len()
+	if size != 1 {
+		t.Errorf("want %d: got %d", 1, size)
 	}
 
 	select {
@@ -47,26 +49,35 @@ func TestUnsubscribe(t *testing.T) {
 	topic := "test-topic"
 	id := "test"
 	ic.Subscribe(topic, id, 1)
-	ic.Unsubscribe(topic, id)
 
 	want := true
 
-	consumers, topicExists := ic.channels[topic]
+	// ensure the topic exists first
+	channel, topicExists := ic.manager.get(topic)
 	if topicExists != want {
 		t.Errorf("want %v: got %v", want, topicExists)
 		return
 	}
 
-	want = false
-	_, chanExists := consumers[id]
+	_, chanExists := channel.get(id)
 
 	if chanExists != want {
 		t.Errorf("want %v: got %v", want, chanExists)
 		return
 	}
 
-	if len(consumers) != 0 {
-		t.Errorf("want %d: got %d", 0, len(consumers))
+	size := channel.len()
+	if size != 1 {
+		t.Errorf("want %d: got %d", 1, size)
+	}
+
+	ic.Unsubscribe(topic, id)
+	want = false
+	channel, topicExists = ic.manager.get(topic)
+
+	if topicExists != want {
+		t.Errorf("want %v: got %v", want, topicExists)
+		return
 	}
 }
 
@@ -79,13 +90,13 @@ func TestLastMessageNoSubscribers(t *testing.T) {
 
 	ic.Publish(topic, want)
 
-	got, exists := ic.lastMessage[topic]
-	if !exists {
-		t.Errorf("last message topic '%s' did not exists", topic)
+	channel, exists := ic.manager.get(topic)
+	if exists {
+		t.Errorf("channel topic '%s' exists and should not", topic)
 	}
 
-	if *got != want {
-		t.Errorf("want %v: got %v", want, got)
+	if channel != nil {
+		t.Errorf("channel instance '%s' exists and should not", topic)
 	}
 }
 
@@ -95,40 +106,59 @@ func TestLastMessageSubscribers(t *testing.T) {
 	topic := "test-topic"
 	id := "test"
 	msg := true
-	// publish first so the message is stored in the last message maps topic.
-	ic.Publish(topic, msg)
+
 	// subscribe and we should receive an immediate message if there is a message in the last message map
 	ch := ic.Subscribe(topic, id, 1)
+	// publish first so the message is stored in the last message maps topic.
+	ic.Publish(topic, msg)
 
-	want, exists := ic.lastMessage[topic]
+	channel, exists := ic.manager.get(topic)
 	if !exists {
-		t.Errorf("last message topic '%s' did not exists", topic)
+		t.Errorf("channel topic '%s' does not exist but should", topic)
 	}
 
+	want := channel.message()
+
+	timeout := time.NewTimer(1 * time.Second)
+	defer timeout.Stop()
 	select {
 	case got := <-ch:
-		if got != *want {
+		if got != want {
 			t.Errorf("want %v: got %v", want, got)
 			return
 		}
-	default:
+	case <-timeout.C:
 		t.Errorf("didnt receive the last message on subscribe")
 		return
 	}
 }
 
-func TestMultipleSubscribesWithPublish(t *testing.T) {
+func TestMultipleSubscribesWithAsyncPublish(t *testing.T) {
 	ic := New[string]()
 
 	topic := "test-topic"
 	id := "test"
 
 	ch1 := ic.Subscribe(topic, id, 1)
-	ic.Publish(topic, "hello1")
-	msg1 := <-ch1
+	go ic.Publish(topic, "hello1")
 
+	timeout := time.NewTimer(1 * time.Second)
+	defer timeout.Stop()
+	var msg1 string
+	select {
+	case msg1 = <-ch1:
+	case <-timeout.C:
+		t.Errorf("did not receive the published message")
+	}
+
+	timeout.Reset(1 * time.Second)
 	ch1Copy := ic.Subscribe(topic, id, 1)
-	msg2 := <-ch1Copy
+	var msg2 string
+	select {
+	case msg2 = <-ch1:
+	case <-timeout.C:
+		t.Errorf("did not receive the published message for the 2nd subscription")
+	}
 
 	ic.Publish(topic, "hello2")
 	ch2 := ic.Subscribe(topic, id, 1)
@@ -176,25 +206,26 @@ func TestMultipleUnSubscribes(t *testing.T) {
 	// subscribe and we should receive an immediate message if there is a message in the last message map
 	ic.Subscribe(topic, id, 1)
 
-	consumer, found := ic.channels[topic]
+	channel, found := ic.manager.get(topic)
 	if !found {
 		t.Errorf("channel topic doesnt exist")
 	}
 
-	if _, exists := consumer[id]; !exists {
-		t.Errorf("consumer channel doesnt exist")
+	if _, exists := channel.get(id); !exists {
+		t.Errorf("consumer '%s' does not exist in channel '%s' doesnt exist", id, topic)
 	}
 
 	ic.Unsubscribe(topic, id)
 
-	if _, exists := consumer[id]; exists {
-		t.Errorf("consumer channel exists after unsubscribe")
+	if _, exists := channel.get(id); exists {
+		t.Errorf("consumer '%s' exists after unsubscribe from channel '%s'", id, topic)
 	}
 
 	ic.Unsubscribe(topic, id)
 
-	if _, exists := consumer[id]; exists {
+	if _, exists := channel.get(id); exists {
 		t.Errorf("consumer channel exists after multiple unsubscribes")
+		t.Errorf("consumer '%s' still exists after multiple unsubscribes from channel '%s'", id, topic)
 	}
 }
 
@@ -209,11 +240,11 @@ func TestUnsubscribeNonExistent(t *testing.T) {
 	ic.Subscribe(topic, id, 1)
 	ic.Unsubscribe(notTopic, id)
 
-	if _, exists := ic.channels[topic]; !exists {
+	if _, exists := ic.manager.get(topic); !exists {
 		t.Errorf("topic '%s' should exist", topic)
 	}
 
-	if _, exists := ic.channels[notTopic]; exists {
+	if _, exists := ic.manager.get(notTopic); exists {
 		t.Errorf("topic '%s' should NOT exist", notTopic)
 	}
 }
@@ -225,18 +256,21 @@ func TestPubSub(t *testing.T) {
 	want := true
 
 	// subscribe and we should receive an immediate message if there is a message in the last message map
-	ch := ic.Subscribe(topic, id, 1)
-	defer ic.Unsubscribe(topic, id)
+	ch := ic.Subscribe(topic, id, 0)
+	// defer ic.Unsubscribe(topic, id)
 
 	ic.Publish(topic, want)
+
+	timeout := time.NewTimer(1 * time.Second)
+	defer timeout.Stop()
 	select {
 	case msg := <-ch:
 		if msg != want {
 			t.Errorf("subscriber did not receive correct message: want %v, got %v", want, msg)
 		}
 		return
-	default:
-		t.Errorf("subscriber did not receive published message")
+	case <-timeout.C:
+		t.Errorf("subscriber did not receive published message in time")
 	}
 }
 
@@ -250,7 +284,7 @@ func TestIntracomClose(t *testing.T) {
 	ic.Subscribe(topic, id, 1)
 	defer ic.Unsubscribe(topic, id)
 
-	if _, exists := ic.channels[topic]; !exists {
+	if _, exists := ic.manager.get(topic); !exists {
 		t.Errorf("topic '%s' should exist", topic)
 	}
 
@@ -266,7 +300,7 @@ func TestIntracomClose(t *testing.T) {
 		t.Errorf("intracom did not close properly")
 	}
 
-	if _, exists := ic.channels[topic]; exists {
+	if _, exists := ic.manager.get(topic); exists {
 		t.Errorf("topic '%s' should not exist after close", topic)
 	}
 }
