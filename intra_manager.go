@@ -41,6 +41,8 @@ func (ics *intraManager[T]) remove(topic string) {
 }
 
 func (ics *intraManager[T]) close() {
+	ics.mu.Lock()
+	defer ics.mu.Unlock()
 	for _, channel := range ics.channels {
 		channel.close()
 	}
