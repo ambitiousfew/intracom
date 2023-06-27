@@ -133,7 +133,46 @@ func TestLastMessageSubscribers(t *testing.T) {
 	}
 }
 
-func TestMultipleSubscribesWithAsyncPublish(t *testing.T) {
+func TestMultipleUnbufferedSubscribesWithAsyncPublish(t *testing.T) {
+	ic := New[string]()
+
+	topic := "test-topic"
+	id := "test"
+
+	ch1 := ic.Subscribe(topic, id, 0)
+	go ic.Publish(topic, "hello1")
+
+	timeout := time.NewTimer(1 * time.Second)
+	defer timeout.Stop()
+	var msg1 string
+	select {
+	case msg1 = <-ch1:
+	case <-timeout.C:
+		t.Errorf("did not receive the published message")
+	}
+
+	timeout.Reset(1 * time.Second)
+	ch1Copy := ic.Subscribe(topic, id, 0)
+	var msg2 string
+	select {
+	case msg2 = <-ch1:
+	case <-timeout.C:
+		t.Errorf("did not receive the published message for the 2nd subscription")
+	}
+
+	ic.Publish(topic, "hello2")
+	ch2 := ic.Subscribe(topic, id, 0)
+
+	if ch1 != ch2 && ch1 != ch1Copy && ch2 != ch1Copy {
+		t.Errorf("subscribing with the same topic and id resulted in different channel")
+	}
+
+	if msg1 != msg2 {
+		t.Errorf("subscribing multiple times didn't return the same last message: want %s, got %s", msg1, msg2)
+	}
+}
+
+func TestMultipleBufferedSubscribesWithAsyncPublish(t *testing.T) {
 	ic := New[string]()
 
 	topic := "test-topic"

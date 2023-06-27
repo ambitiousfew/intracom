@@ -10,16 +10,30 @@ type intraConsumer[T any] struct {
 	signal    signal
 	delivered *atomic.Int32 // 0 - undelivered, 1 - delivered
 	ch        chan T
-	closed    bool
-	mu        *sync.RWMutex
+	bufSize   int
+
+	// in the unique case of an unbuffered subscribe used as stop signal
+	workerStopC chan struct{}
+
+	closed bool
+	mu     *sync.RWMutex
 }
 
-func newIntraConsumer[T any](ch chan T) *intraConsumer[T] {
+func newIntraConsumer[T any](bufSize int) *intraConsumer[T] {
+	if bufSize < 0 {
+		// dont allow negative, make it unbuffered.
+		bufSize = 0
+	}
+
+	ch := make(chan T, bufSize)
 	return &intraConsumer[T]{
 		ch:        ch,
+		bufSize:   bufSize,
 		delivered: new(atomic.Int32),
-		signal:    newSignal(),
-		mu:        new(sync.RWMutex),
+
+		workerStopC: make(chan struct{}),
+		signal:      newSignal(),
+		mu:          new(sync.RWMutex),
 	}
 }
 
@@ -62,6 +76,7 @@ func (c *intraConsumer[T]) close() {
 	c.mu.Lock()
 	if !c.closed {
 		c.closed = true
+		close(c.workerStopC)
 		close(c.ch)
 	}
 	c.mu.Unlock()

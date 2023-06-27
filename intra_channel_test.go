@@ -41,9 +41,7 @@ func TestIntraChannelNoSubscribe(t *testing.T) {
 
 func TestIntraChannelSubscribe(t *testing.T) {
 	channel := newIntraChannel[string]()
-
-	ch := make(chan string, 0)
-	consumer := newIntraConsumer[string](ch)
+	consumer := newIntraConsumer[string](0)
 
 	id := "test-1"
 
@@ -61,8 +59,7 @@ func TestIntraChannelSubscribe(t *testing.T) {
 func TestIntraChannelClose(t *testing.T) {
 	channel := newIntraChannel[string]()
 
-	ch := make(chan string, 0)
-	consumer := newIntraConsumer[string](ch)
+	consumer := newIntraConsumer[string](0)
 
 	id := "test-1"
 
@@ -78,7 +75,7 @@ func TestIntraChannelClose(t *testing.T) {
 			case <-timeout.C:
 				// send a fail if we dont receive a close fast enough.
 				testC <- "fail"
-			case msg := <-ch:
+			case msg := <-consumer.ch:
 				if msg == "" {
 					// if we received a close on a string channel.
 					testC <- "success"

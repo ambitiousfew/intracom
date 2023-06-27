@@ -26,15 +26,14 @@ func (i *Intracom[T]) Subscribe(topic, consumerID string, chanSize int) <-chan T
 
 	channel, exists := i.manager.get(topic)
 	if !exists {
-		ch := make(chan T, chanSize)
-		consumer := newIntraConsumer[T](ch)
+		consumer := newIntraConsumer[T](chanSize)
 		// if the topic does not yet exist, create an empty subs map for that topic.
 		channel := newIntraChannel[T]()
 		// add the consumer into the channel topic map
 		channel.subscribe(consumerID, consumer)
 		// add the new channel to our map of all topics.
 		i.manager.add(topic, channel)
-		return ch
+		return consumer.ch
 	}
 
 	// TODO: How to handle multiple subscribes?
@@ -46,10 +45,9 @@ func (i *Intracom[T]) Subscribe(topic, consumerID string, chanSize int) <-chan T
 	}
 
 	// channel topic exists, consumer does not.
-	ch := make(chan T, chanSize)
-	consumer := newIntraConsumer[T](ch)
+	consumer := newIntraConsumer[T](chanSize)
 	channel.subscribe(consumerID, consumer)
-	return ch
+	return consumer.ch
 }
 
 func (i *Intracom[T]) Unsubscribe(topic, consumerID string) {

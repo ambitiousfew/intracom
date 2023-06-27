@@ -6,15 +6,14 @@ import (
 )
 
 func TestNewIntraConsumer(t *testing.T) {
-	ch := make(chan string)
-	consumer := newIntraConsumer[string](ch)
+	consumer := newIntraConsumer[string](0)
 
 	if consumer == nil {
 		t.Errorf("wanted non-nil, got %v", consumer)
 	}
 
-	if consumer.ch != ch {
-		t.Errorf("wanted consumer channels to match")
+	if consumer.ch == nil {
+		t.Errorf("expect non-nil of consumer channel, got %v", consumer.ch)
 	}
 
 	want := int32(0)
@@ -38,8 +37,7 @@ func TestNewIntraConsumer(t *testing.T) {
 }
 
 func TestIntraConsumerClose(t *testing.T) {
-	ch := make(chan string)
-	consumer := newIntraConsumer[string](ch)
+	consumer := newIntraConsumer[string](0)
 
 	if consumer.closed != false {
 		t.Errorf("want %v, got %v", false, consumer.closed)
@@ -53,8 +51,7 @@ func TestIntraConsumerClose(t *testing.T) {
 }
 
 func TestIntraConsumerSend(t *testing.T) {
-	ch := make(chan string)
-	consumer := newIntraConsumer[string](ch)
+	consumer := newIntraConsumer[string](0)
 
 	testC := make(chan string)
 
@@ -63,7 +60,7 @@ func TestIntraConsumerSend(t *testing.T) {
 		case <-testC:
 			// signal stop of this worker.
 			return
-		case <-ch:
+		case <-consumer.ch:
 			// message was sent to the channel.
 			testC <- "success"
 			return

@@ -60,10 +60,28 @@ func (ic *intraChannel[T]) subscribe(id string, consumer *intraConsumer[T]) {
 	ic.mu.RLock()
 	// attempt to place the current last message in the consumer channel if exists
 	if ic.lastMessage != nil {
-		select {
-		case c.ch <- *ic.lastMessage:
-		default:
+		if c.bufSize == 0 {
+			// unbuffered channel case
+			// This would be a very short lived worker only when a last message exists to deliver.
+			go func() {
+				select {
+				case <-c.workerStopC:
+					// if c.close() happened before we were able to send message. stop trying.
+					return
+				case c.ch <- *ic.lastMessage:
+					return
+				}
+			}()
+		} else {
+			// buffered channel case - we succeed if there is room in the buffer
+			// NOTE: resubscribes into a larger buffer without consumer the channel
+			// you can end up with duplicate last messages being queued into the buffer.
+			select {
+			case c.ch <- *ic.lastMessage:
+			default:
+			}
 		}
+
 	}
 	ic.mu.RUnlock()
 }
