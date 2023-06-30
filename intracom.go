@@ -20,9 +20,9 @@ func New[T any]() *Intracom[T] {
 
 // Subscribe will register a topic and consumer to that topic with a given channel size (buffer).
 func (i *Intracom[T]) Subscribe(topic, consumerID string, chanSize int) *Consumer[T] {
-	if chanSize < 0 {
+	if chanSize < 1 {
 		// do not allow negative channel sizes, though we may want to allow unbuffered.
-		chanSize = 0
+		chanSize = 1
 	}
 
 	channel, exists := i.manager.get(topic)
@@ -89,7 +89,10 @@ func (i *Intracom[T]) IsClosed() bool {
 // This will effectively cleanup all open channels and remove all subscriptions.
 // The intracom instance will not be usable after this, a new instance would be required.
 func (i *Intracom[T]) Close() {
-	if !i.IsClosed() {
+	i.mu.RLock()
+	closed := i.closed
+	i.mu.RUnlock()
+	if !closed {
 		i.mu.Lock()
 		i.closed = true
 		i.mu.Unlock()

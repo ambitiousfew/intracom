@@ -20,13 +20,10 @@ func TestnewChannel(t *testing.T) {
 		t.Errorf("expected lastMessage to be nil, got %v", channel.lastMessage)
 	}
 
-	if channel.cmu == nil {
-		t.Errorf("expected consumer map mutex to be non-nil, got %v", channel.cmu)
+	if channel.mu == nil {
+		t.Errorf("expected consumer map mutex to be non-nil, got %v", channel.mu)
 	}
 
-	if channel.lmu == nil {
-		t.Errorf("expected last message mutex to be non-nil, got %v", channel.lmu)
-	}
 }
 
 func TestIntraChannelNoSubscribe(t *testing.T) {
@@ -103,12 +100,8 @@ func TestIntraChannelClose(t *testing.T) {
 		t.Errorf("want nil, got %v", channel.lastMessage)
 	}
 
-	if channel.cmu == nil {
+	if channel.mu == nil {
 		t.Errorf("want non-nil consumer map mutex, got nil")
-	}
-
-	if channel.lmu == nil {
-		t.Errorf("want non-nil last message mutex, got nil")
 	}
 
 }

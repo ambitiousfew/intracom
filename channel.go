@@ -6,71 +6,66 @@ import (
 
 // channel represents a single channel topic which holds all subscriptions to that topic
 type channel[T any] struct {
-	consumers map[string]*Consumer[T]
-	// consumer map mutex
-	cmu *sync.RWMutex
-
+	consumers   map[string]*Consumer[T]
 	lastMessage *T
-	// last messages mutex
-	lmu *sync.RWMutex
+	mu          *sync.RWMutex
 }
 
 func newChannel[T any]() *channel[T] {
 	return &channel[T]{
 		consumers:   make(map[string]*Consumer[T]),
-		cmu:         new(sync.RWMutex),
 		lastMessage: nil,
-		lmu:         new(sync.RWMutex),
+		mu:          new(sync.RWMutex),
 	}
 }
 
 func (ch *channel[T]) message() T {
-	ch.lmu.RLock()
-	defer ch.lmu.RUnlock()
+	ch.mu.RLock()
+	defer ch.mu.RUnlock()
 	return *ch.lastMessage
 }
 
 func (ch *channel[T]) get(id string) (*Consumer[T], bool) {
-	ch.cmu.RLock()
-	defer ch.cmu.RUnlock()
+	ch.mu.RLock()
+	defer ch.mu.RUnlock()
 	consumer, exists := ch.consumers[id]
 	return consumer, exists
 }
 
 func (ch *channel[T]) len() int {
-	ch.cmu.RLock()
-	defer ch.cmu.RUnlock()
+	ch.mu.RLock()
+	defer ch.mu.RUnlock()
 	return len(ch.consumers)
 }
 
 func (ch *channel[T]) broadcast(message T) {
 	// write lock the last message
-	ch.lmu.Lock()
+	ch.mu.Lock()
 	ch.lastMessage = &message
-	ch.lmu.Unlock()
+	ch.mu.Unlock()
 
 	// read lock the consumer map
-	ch.cmu.RLock()
+	ch.mu.RLock()
 	for _, consumer := range ch.consumers {
 		consumer.send(message)
 	}
-	ch.cmu.RUnlock()
+	ch.mu.RUnlock()
 }
 
 func (ch *channel[T]) subscribe(id string, consumer *Consumer[T]) {
 	c, exists := ch.get(id)
 	if !exists {
 		// write lock the consumers map
-		ch.cmu.Lock()
+		ch.mu.Lock()
 		c = consumer
 		ch.consumers[id] = c
-		ch.cmu.Unlock()
+		ch.mu.Unlock()
 	}
 
 	// read lock the last message
-	ch.lmu.RLock()
+	ch.mu.RLock()
 	last := ch.lastMessage
-	ch.lmu.RUnlock()
+	ch.mu.RUnlock()
 
 	if last != nil {
 		c.send(*last)
@@ -89,8 +84,8 @@ func (ch *channel[T]) unsubscribe(id string) {
 	// consumer cleanup
 	consumer.close()
 
-	ch.cmu.Lock()
-	defer ch.cmu.Unlock()
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	// channel map cleanup
 	delete(ch.consumers, id)
 
@@ -99,19 +94,19 @@ func (ch *channel[T]) unsubscribe(id string) {
 // unsubscribe will remove a consumer from the channel map by its id
 func (ch *channel[T]) close() {
 	// read lock consumer map while we close
-	ch.cmu.RLock()
+	ch.mu.RLock()
 	for _, consumer := range ch.consumers {
 		consumer.close()
 	}
-	ch.cmu.RUnlock()
+	ch.mu.RUnlock()
 
 	// write lock last message
-	ch.lmu.Lock()
+	ch.mu.Lock()
 	ch.lastMessage = nil
-	ch.lmu.Unlock()
+	ch.mu.Unlock()
 
 	// write lock consumer map
-	ch.cmu.Lock()
+	ch.mu.Lock()
 	ch.consumers = make(map[string]*Consumer[T])
-	ch.cmu.Unlock()
+	ch.mu.Unlock()
 }
