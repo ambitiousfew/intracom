@@ -25,7 +25,7 @@ func TestnewConsumer(t *testing.T) {
 	}
 }
 
-func TestIntraConsumerClose(t *testing.T) {
+func TestConsumerClose(t *testing.T) {
 	consumer := newConsumer[string](0)
 
 	if consumer.closed != false {
@@ -39,7 +39,7 @@ func TestIntraConsumerClose(t *testing.T) {
 	}
 }
 
-func TestIntraConsumerSend(t *testing.T) {
+func TestConsumerSend(t *testing.T) {
 	consumer := newConsumer[string](0)
 
 	testC := make(chan string)

@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestnewManager(t *testing.T) {
+func TestNewManager(t *testing.T) {
 	manager := newManager[string]()
 
 	if manager == nil {

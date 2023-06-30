@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func TestnewChannel(t *testing.T) {
+func TestNewChannel(t *testing.T) {
 	channel := newChannel[string]()
 
 	if channel == nil {
@@ -26,7 +26,7 @@ func TestnewChannel(t *testing.T) {
 
 }
 
-func TestIntraChannelNoSubscribe(t *testing.T) {
+func TestChannelNoSubscribe(t *testing.T) {
 	channel := newChannel[string]()
 
 	id := "test-1"
@@ -40,7 +40,7 @@ func TestIntraChannelNoSubscribe(t *testing.T) {
 	}
 }
 
-func TestIntraChannelSubscribe(t *testing.T) {
+func TestChannelSubscribe(t *testing.T) {
 	channel := newChannel[string]()
 	consumer := newConsumer[string](0)
 
@@ -57,7 +57,7 @@ func TestIntraChannelSubscribe(t *testing.T) {
 	}
 }
 
-func TestIntraChannelClose(t *testing.T) {
+func TestChannelClose(t *testing.T) {
 	channel := newChannel[string]()
 
 	consumer := newConsumer[string](0)
