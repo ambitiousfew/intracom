@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-func TestNewIntraConsumer(t *testing.T) {
-	consumer := newIntraConsumer[string](0)
+func TestnewConsumer(t *testing.T) {
+	consumer := newConsumer[string](0)
 
 	if consumer == nil {
 		t.Errorf("wanted non-nil, got %v", consumer)
@@ -16,28 +16,17 @@ func TestNewIntraConsumer(t *testing.T) {
 		t.Errorf("expect non-nil of consumer channel, got %v", consumer.ch)
 	}
 
-	want := int32(0)
-	got := consumer.delivered.Load()
-	if want != got {
-		t.Errorf("wanted %d for delivered value, got %d", want, got)
-	}
-
 	if consumer.mu == nil {
 		t.Errorf("wanted non-nil for mutex, got %v", consumer.mu)
 	}
 
-	// check type of a non-interface value.
-	switch signalType := interface{}(consumer.signal).(type) {
-	case signal:
-		/// type matched
-		return
-	default:
-		t.Errorf("wanted a signal literal, got %v", signalType)
+	if consumer.bufSize == 0 {
+		t.Errorf("wanted 1 for bufSize, got %d", consumer.bufSize)
 	}
 }
 
 func TestIntraConsumerClose(t *testing.T) {
-	consumer := newIntraConsumer[string](0)
+	consumer := newConsumer[string](0)
 
 	if consumer.closed != false {
 		t.Errorf("want %v, got %v", false, consumer.closed)
@@ -51,7 +40,7 @@ func TestIntraConsumerClose(t *testing.T) {
 }
 
 func TestIntraConsumerSend(t *testing.T) {
-	consumer := newIntraConsumer[string](0)
+	consumer := newConsumer[string](0)
 
 	testC := make(chan string)
 

@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-func TestNewIntraChannel(t *testing.T) {
-	channel := newIntraChannel[string]()
+func TestnewChannel(t *testing.T) {
+	channel := newChannel[string]()
 
 	if channel == nil {
 		t.Errorf("channel instance should not be nil")
@@ -20,13 +20,17 @@ func TestNewIntraChannel(t *testing.T) {
 		t.Errorf("expected lastMessage to be nil, got %v", channel.lastMessage)
 	}
 
-	if channel.mu == nil {
-		t.Errorf("expected mutex to be non-nil, got %v", channel.mu)
+	if channel.cmu == nil {
+		t.Errorf("expected consumer map mutex to be non-nil, got %v", channel.cmu)
+	}
+
+	if channel.lmu == nil {
+		t.Errorf("expected last message mutex to be non-nil, got %v", channel.lmu)
 	}
 }
 
 func TestIntraChannelNoSubscribe(t *testing.T) {
-	channel := newIntraChannel[string]()
+	channel := newChannel[string]()
 
 	id := "test-1"
 
@@ -40,8 +44,8 @@ func TestIntraChannelNoSubscribe(t *testing.T) {
 }
 
 func TestIntraChannelSubscribe(t *testing.T) {
-	channel := newIntraChannel[string]()
-	consumer := newIntraConsumer[string](0)
+	channel := newChannel[string]()
+	consumer := newConsumer[string](0)
 
 	id := "test-1"
 
@@ -57,9 +61,9 @@ func TestIntraChannelSubscribe(t *testing.T) {
 }
 
 func TestIntraChannelClose(t *testing.T) {
-	channel := newIntraChannel[string]()
+	channel := newChannel[string]()
 
-	consumer := newIntraConsumer[string](0)
+	consumer := newConsumer[string](0)
 
 	id := "test-1"
 
@@ -99,8 +103,12 @@ func TestIntraChannelClose(t *testing.T) {
 		t.Errorf("want nil, got %v", channel.lastMessage)
 	}
 
-	if channel.mu == nil {
-		t.Errorf("want non-nil mutex, got nil")
+	if channel.cmu == nil {
+		t.Errorf("want non-nil consumer map mutex, got nil")
+	}
+
+	if channel.lmu == nil {
+		t.Errorf("want non-nil last message mutex, got nil")
 	}
 
 }

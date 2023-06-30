@@ -4,8 +4,8 @@ import (
 	"testing"
 )
 
-func TestNewIntraManager(t *testing.T) {
-	manager := newIntraManager[string]()
+func TestnewManager(t *testing.T) {
+	manager := newManager[string]()
 
 	if manager == nil {
 		t.Errorf("manager should not be nil")
@@ -21,7 +21,7 @@ func TestNewIntraManager(t *testing.T) {
 }
 
 func TestIntraManagerGetNonExisting(t *testing.T) {
-	manager := newIntraManager[string]()
+	manager := newManager[string]()
 
 	id := "test-topic"
 
@@ -35,7 +35,7 @@ func TestIntraManagerGetNonExisting(t *testing.T) {
 }
 
 func TestIntraManagerGetExisting(t *testing.T) {
-	manager := newIntraManager[string]()
+	manager := newManager[string]()
 
 	// TODO:
 	id := "test-topic"
@@ -50,8 +50,8 @@ func TestIntraManagerGetExisting(t *testing.T) {
 }
 
 func TestIntraManagerAdd(t *testing.T) {
-	manager := newIntraManager[string]()
-	channel := newIntraChannel[string]()
+	manager := newManager[string]()
+	channel := newChannel[string]()
 
 	topic := "test-topic"
 
@@ -72,8 +72,8 @@ func TestIntraManagerAdd(t *testing.T) {
 }
 
 func TestIntraManagerCloseWhileNotEmpty(t *testing.T) {
-	manager := newIntraManager[string]()
-	channel := newIntraChannel[string]()
+	manager := newManager[string]()
+	channel := newChannel[string]()
 
 	topic := "test-topic"
 	manager.add(topic, channel)
@@ -92,7 +92,7 @@ func TestIntraManagerCloseWhileNotEmpty(t *testing.T) {
 }
 
 func TestIntraManagerCloseWhileEmpty(t *testing.T) {
-	manager := newIntraManager[string]()
+	manager := newManager[string]()
 
 	want := 0
 

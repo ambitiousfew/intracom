@@ -1,6 +1,7 @@
 package intracom
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ func TestSubscribe(t *testing.T) {
 	topic := "test-topic"
 	id := "test"
 
-	ch := ic.Subscribe(topic, id, 1)
+	sub := ic.Subscribe(topic, id, 1)
 	defer ic.Unsubscribe(topic, id)
 
 	want := true
@@ -35,12 +36,13 @@ func TestSubscribe(t *testing.T) {
 		t.Errorf("want %d: got %d", 1, size)
 	}
 
-	select {
-	case <-ch:
+	timeout := 100 * time.Millisecond
+
+	_, ok := sub.NextMsg(timeout)
+	if ok {
 		t.Errorf("should not have received a message, nothing has been published")
-	default:
-		return
 	}
+
 }
 
 func TestUnsubscribe(t *testing.T) {
@@ -108,7 +110,7 @@ func TestLastMessageSubscribers(t *testing.T) {
 	msg := true
 
 	// subscribe and we should receive an immediate message if there is a message in the last message map
-	ch := ic.Subscribe(topic, id, 1)
+	sub := ic.Subscribe(topic, id, 1)
 	// publish first so the message is stored in the last message maps topic.
 	ic.Publish(topic, msg)
 
@@ -119,56 +121,15 @@ func TestLastMessageSubscribers(t *testing.T) {
 
 	want := channel.message()
 
-	timeout := time.NewTimer(1 * time.Second)
-	defer timeout.Stop()
-	select {
-	case got := <-ch:
-		if got != want {
-			t.Errorf("want %v: got %v", want, got)
-			return
-		}
-	case <-timeout.C:
+	timeout := 1 * time.Second
+
+	msg, ok := sub.NextMsg(timeout)
+	if !ok {
 		t.Errorf("didnt receive the last message on subscribe")
-		return
-	}
-}
-
-func TestMultipleUnbufferedSubscribesWithAsyncPublish(t *testing.T) {
-	ic := New[string]()
-
-	topic := "test-topic"
-	id := "test"
-
-	ch1 := ic.Subscribe(topic, id, 0)
-	go ic.Publish(topic, "hello1")
-
-	timeout := time.NewTimer(1 * time.Second)
-	defer timeout.Stop()
-	var msg1 string
-	select {
-	case msg1 = <-ch1:
-	case <-timeout.C:
-		t.Errorf("did not receive the published message")
 	}
 
-	timeout.Reset(1 * time.Second)
-	ch1Copy := ic.Subscribe(topic, id, 0)
-	var msg2 string
-	select {
-	case msg2 = <-ch1:
-	case <-timeout.C:
-		t.Errorf("did not receive the published message for the 2nd subscription")
-	}
-
-	ic.Publish(topic, "hello2")
-	ch2 := ic.Subscribe(topic, id, 0)
-
-	if ch1 != ch2 && ch1 != ch1Copy && ch2 != ch1Copy {
-		t.Errorf("subscribing with the same topic and id resulted in different channel")
-	}
-
-	if msg1 != msg2 {
-		t.Errorf("subscribing multiple times didn't return the same last message: want %s, got %s", msg1, msg2)
+	if msg != want {
+		t.Errorf("want %v: got %v", want, msg)
 	}
 }
 
@@ -177,37 +138,110 @@ func TestMultipleBufferedSubscribesWithAsyncPublish(t *testing.T) {
 
 	topic := "test-topic"
 	id := "test"
+	testMsg := "hello1"
+	sub1 := ic.Subscribe(topic, id, 1)
+	ic.Publish(topic, testMsg)
 
-	ch1 := ic.Subscribe(topic, id, 1)
-	go ic.Publish(topic, "hello1")
-
-	timeout := time.NewTimer(1 * time.Second)
-	defer timeout.Stop()
-	var msg1 string
-	select {
-	case msg1 = <-ch1:
-	case <-timeout.C:
-		t.Errorf("did not receive the published message")
+	msg1, ok := sub1.NextMsg(10 * time.Millisecond)
+	if !ok {
+		t.Errorf("did not receive the published message within the timeout duration")
 	}
 
-	timeout.Reset(1 * time.Second)
-	ch1Copy := ic.Subscribe(topic, id, 1)
-	var msg2 string
-	select {
-	case msg2 = <-ch1:
-	case <-timeout.C:
-		t.Errorf("did not receive the published message for the 2nd subscription")
+	msg2, ok := sub1.NextMsg(10 * time.Millisecond)
+	if ok {
+		t.Errorf("should not have received any messages")
 	}
 
-	ic.Publish(topic, "hello2")
-	ch2 := ic.Subscribe(topic, id, 1)
+	ic.Publish(topic, testMsg)
+	sub2 := ic.Subscribe(topic, id, 1)
 
-	if ch1 != ch2 && ch1 != ch1Copy && ch2 != ch1Copy {
-		t.Errorf("subscribing with the same topic and id resulted in different channel")
+	if sub1 != sub2 {
+		t.Errorf("subscribing with the same topic and id resulted in different consumer")
 	}
 
-	if msg1 != msg2 {
-		t.Errorf("subscribing multiple times didn't return the same last message: want %s, got %s", msg1, msg2)
+	if msg1 != testMsg {
+		t.Errorf("test msg1 want %s, got %s", msg1, msg2)
+	}
+
+	if msg2 != "" {
+		t.Errorf("test msg2 want %s, got %s", msg1, msg2)
+	}
+}
+
+func TestMultiplePublishersOneSubscriber(t *testing.T) {
+	ic := New[string]()
+
+	topic := "multiple-publish"
+	id := "subscriber-1"
+	msgsToPublish := 5
+
+	sub := ic.Subscribe(topic, id, msgsToPublish)
+
+	for i := 0; i < msgsToPublish; i++ {
+		go ic.Publish(topic, "hello")
+	}
+
+	timeout := 250 * time.Millisecond
+
+	for i := 0; i < msgsToPublish; i++ {
+		_, ok := sub.NextMsg(timeout)
+		if !ok {
+			t.Errorf("timed out before receiving message")
+		}
+	}
+}
+
+func TestMultipleSubscribersOnePublisher(t *testing.T) {
+	ic := New[map[string]string]()
+
+	topic := "broadcaster-of-states"
+	id1 := "subscriber-1"
+	id2 := "subscriber-2"
+	id3 := "subscriber-3"
+
+	sub1 := ic.Subscribe(topic, id1, 0)
+	sub2 := ic.Subscribe(topic, id2, 0)
+	sub3 := ic.Subscribe(topic, id3, 0)
+
+	states := make(map[string]string)
+	states[id1] = "initial"
+	states[id2] = "initial"
+	states[id3] = "initial"
+
+	updateToState := "finish"
+
+	for i := 0; i < 3; i++ {
+		states[fmt.Sprintf("subscriber-%d", i+1)] = updateToState
+		ic.Publish(topic, states)
+	}
+
+	timeout := 100 * time.Millisecond
+
+	msg1, ok1 := sub1.NextMsg(timeout)
+	if !ok1 {
+		t.Errorf("timed out before receiving message")
+	}
+
+	if msg1[id1] != "finish" {
+		t.Errorf("did not receive correct finish state")
+	}
+
+	msg2, ok2 := sub2.NextMsg(timeout)
+	if !ok2 {
+		t.Errorf("timed out before receiving message")
+	}
+
+	if msg2[id2] != "finish" {
+		t.Errorf("did not receive correct finish state")
+	}
+
+	msg3, ok3 := sub3.NextMsg(timeout)
+	if !ok3 {
+		t.Errorf("timed out before receiving message")
+	}
+
+	if msg3[id3] != "finish" {
+		t.Errorf("did not receive correct finish state")
 	}
 }
 
@@ -217,22 +251,23 @@ func TestMultipleSubscribesWithoutPublish(t *testing.T) {
 	topic := "test-topic"
 	id := "test"
 
-	ch1 := ic.Subscribe(topic, id, 1)
-	ch1Copy := ic.Subscribe(topic, id, 1)
+	sub1 := ic.Subscribe(topic, id, 1)
+	sub2 := ic.Subscribe(topic, id, 1)
 
-	if ch1 != ch1Copy {
-		t.Errorf("subscribing with the same topic and id resulted in different channel")
+	if sub1 != sub2 {
+		t.Errorf("subscribing with the same topic and id resulted in different consumer")
 	}
 
-	select {
-	case <-ch1:
-		t.Errorf("subscribing without publish should not receive any last published message for ch1")
-	case <-ch1Copy:
-		t.Errorf("subscribing without publish should not receive any last published message for ch1Copy")
-	default:
-		// we should hit this case
-		return
+	timeout := 100 * time.Millisecond
 
+	_, ok1 := sub1.NextMsg(timeout)
+	if ok1 {
+		t.Errorf("consumer 1 should not receive a message")
+	}
+
+	_, ok2 := sub2.NextMsg(timeout)
+	if ok2 {
+		t.Errorf("consumer 2 should not receive a message")
 	}
 }
 
@@ -288,28 +323,27 @@ func TestUnsubscribeNonExistent(t *testing.T) {
 	}
 }
 
-func TestPubSub(t *testing.T) {
+func TestPubSubUsingBool(t *testing.T) {
 	ic := New[bool]()
 	topic := "test-topic"
 	id := "test"
 	want := true
 
 	// subscribe and we should receive an immediate message if there is a message in the last message map
-	ch := ic.Subscribe(topic, id, 0)
+	sub := ic.Subscribe(topic, id, 0)
 	// defer ic.Unsubscribe(topic, id)
 
 	ic.Publish(topic, want)
 
-	timeout := time.NewTimer(1 * time.Second)
-	defer timeout.Stop()
-	select {
-	case msg := <-ch:
-		if msg != want {
-			t.Errorf("subscriber did not receive correct message: want %v, got %v", want, msg)
-		}
-		return
-	case <-timeout.C:
+	timeout := 100 * time.Millisecond
+
+	msg, ok := sub.NextMsg(timeout)
+	if !ok {
 		t.Errorf("subscriber did not receive published message in time")
+	}
+
+	if msg != want {
+		t.Errorf("subscriber did not receive correct message: want %v, got %v", want, msg)
 	}
 }
 
@@ -330,12 +364,12 @@ func TestIntracomClose(t *testing.T) {
 	ic.Publish(topic, want)
 
 	// ensure we arent yet closed
-	if ic.closed {
+	if ic.IsClosed() {
 		t.Errorf("intracom should not be closed already")
 	}
 
 	ic.Close()
-	if !ic.closed {
+	if !ic.IsClosed() {
 		t.Errorf("intracom did not close properly")
 	}
 
