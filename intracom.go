@@ -2,11 +2,12 @@ package intracom
 
 import (
 	"sync"
+	"sync/atomic"
 )
 
 type Intracom[T any] struct {
 	manager *manager[T]
-	closed  bool
+	closed  *atomic.Bool
 	mu      *sync.RWMutex
 }
 
@@ -14,7 +15,7 @@ func New[T any]() *Intracom[T] {
 	return &Intracom[T]{
 		mu:      new(sync.RWMutex),
 		manager: newManager[T](),
-		closed:  false,
+		closed:  new(atomic.Bool),
 	}
 }
 
@@ -77,25 +78,13 @@ func (i *Intracom[T]) Publish(topic string, message T) {
 	channel.broadcast(message)
 }
 
-// IsClosed checks to see if Close has been previously called returning a bool of true/false
-func (i *Intracom[T]) IsClosed() bool {
-	i.mu.RLock()
-	defer i.mu.RUnlock()
-	return i.closed
-}
-
 // Close is safe to call multiple times it will inform the underlying intracom channel manager
 // and all its channels and consumers to stop/close their channels.
 // This will effectively cleanup all open channels and remove all subscriptions.
 // The intracom instance will not be usable after this, a new instance would be required.
 func (i *Intracom[T]) Close() {
-	i.mu.RLock()
-	closed := i.closed
-	i.mu.RUnlock()
-	if !closed {
-		i.mu.Lock()
-		i.closed = true
-		i.mu.Unlock()
+	if !i.closed.Swap(true) {
+		// if we swap to true and the old val is false, we arent closed yet.
 		i.manager.close()
 	}
 }

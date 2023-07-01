@@ -3,6 +3,7 @@ package intracom
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -11,8 +12,9 @@ type Consumer[T any] struct {
 	ch      chan T
 	bufSize int
 
-	closed bool
-	mu     *sync.RWMutex
+	closed *atomic.Bool
+
+	mu *sync.RWMutex
 }
 
 func newConsumer[T any](bufSize int) *Consumer[T] {
@@ -25,6 +27,7 @@ func newConsumer[T any](bufSize int) *Consumer[T] {
 		ch:      ch,
 		bufSize: bufSize,
 		mu:      new(sync.RWMutex),
+		closed:  new(atomic.Bool),
 	}
 }
 
@@ -92,11 +95,8 @@ func (c *Consumer[T]) NextMsgWithContext(ctx context.Context) (T, bool) {
 }
 
 func (c *Consumer[T]) send(message T) {
-	c.mu.RLock()
-	closed := c.closed
-	c.mu.RUnlock()
-
-	if closed {
+	if c.closed.Load() {
+		// if we are closed, dont try to send.
 		return
 	}
 
@@ -111,10 +111,8 @@ func (c *Consumer[T]) send(message T) {
 }
 
 func (c *Consumer[T]) close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.closed {
-		c.closed = true
+	if c.closed.Swap(true) {
+		// if we swap to true and old val was false we arent closed yet.
 		close(c.ch)
 	}
 }

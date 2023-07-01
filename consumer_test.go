@@ -28,13 +28,13 @@ func TestnewConsumer(t *testing.T) {
 func TestConsumerClose(t *testing.T) {
 	consumer := newConsumer[string](0)
 
-	if consumer.closed != false {
+	if consumer.closed.Load() != false {
 		t.Errorf("want %v, got %v", false, consumer.closed)
 	}
 
 	consumer.close()
 
-	if consumer.closed != true {
+	if consumer.closed.Load() != true {
 		t.Errorf("want %v, got %v", true, consumer.closed)
 	}
 }

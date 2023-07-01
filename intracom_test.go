@@ -363,15 +363,7 @@ func TestIntracomClose(t *testing.T) {
 
 	ic.Publish(topic, want)
 
-	// ensure we arent yet closed
-	if ic.IsClosed() {
-		t.Errorf("intracom should not be closed already")
-	}
-
 	ic.Close()
-	if !ic.IsClosed() {
-		t.Errorf("intracom did not close properly")
-	}
 
 	if _, exists := ic.manager.get(topic); exists {
 		t.Errorf("topic '%s' should not exist after close", topic)
