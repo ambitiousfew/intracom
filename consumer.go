@@ -40,7 +40,7 @@ func (c *Consumer[T]) Fetch(size int, duration time.Duration) ([]T, bool) {
 	for {
 		select {
 		case <-timeout.C:
-			return batch, len(batch) == 0
+			return batch, len(batch) > 0
 		case msg := <-c.ch:
 			batch = append(batch, msg)
 			if len(batch) == size {
