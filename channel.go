@@ -1,112 +1,201 @@
 package intracom
 
-import (
-	"sync"
-)
+import "fmt"
 
-// channel represents a single channel topic which holds all subscriptions to that topic
+type subscriber[T any] struct {
+	rxC chan T
+	txC chan T
+
+	ch   chan T
+	open bool
+	// doneC chan struct{}
+}
+
+func (s *subscriber[T]) manager() {
+	for recvMsg := range s.rxC {
+		select {
+		case s.ch <- recvMsg:
+		default:
+			<-s.ch          // pop one
+			s.ch <- recvMsg // push one
+		}
+	}
+}
+
+func (s *subscriber[T]) send(message T) {
+	if s.open {
+		select {
+		case s.ch <- message:
+		default:
+			fmt.Println("pop one")
+			_, open := <-s.ch
+			if !open {
+				fmt.Println("channel was closed")
+				return
+			}
+			fmt.Println("push one")
+			// <-s.ch          // pop one
+			s.ch <- message // push one
+		}
+	}
+}
+
+// // channel represents a single channel topic which holds all subscriptions to that topic
 type channel[T any] struct {
-	consumers   map[string]*Consumer[T]
+	id          string
+	subscribers map[string]*subscriber[T]
 	lastMessage *T
-	mu          *sync.RWMutex
+
+	addC     chan addRequest[T]
+	removeC  chan string
+	lookupC  chan subscriberRequest[T]
+	publishC chan T
+
+	doneC chan struct{}
 }
 
-func newChannel[T any]() *channel[T] {
-	return &channel[T]{
-		consumers:   make(map[string]*Consumer[T]),
+func newChannel[T any](name string) *channel[T] {
+	ch := &channel[T]{
+		id: name,
+
+		subscribers: make(map[string]*subscriber[T]),
+
+		addC:     make(chan addRequest[T], 1),
+		removeC:  make(chan string, 1),
+		lookupC:  make(chan subscriberRequest[T], 1),
+		publishC: make(chan T, 1),
+
+		doneC:       make(chan struct{}, 1),
 		lastMessage: nil,
-		mu:          new(sync.RWMutex),
+	}
+
+	// manages shared state via message passing
+	go ch.startManager()
+	return ch
+}
+
+func (c *channel[T]) startManager() {
+	// defer fmt.Println("exiting channel manager")
+	for {
+		select {
+		case <-c.doneC:
+			// receive a done signal, close all subscribers.
+			for _, s := range c.subscribers {
+				if s.open {
+					// if its not already closed, close it.
+					s.open = false
+					close(s.ch)
+				}
+			}
+			// clear the map
+			c.subscribers = make(map[string]*subscriber[T])
+			// fmt.Printf("exiting channel %s...", c.id)
+			return
+
+		case id := <-c.removeC:
+			if sub, exists := c.subscribers[id]; exists {
+				if sub.open {
+					// c.subscribers[id] = &subscriber[T]{
+					// 	open:  false,
+					// 	ch:    sub.ch,
+					// 	doneC: make(chan struct{}, 1),
+					// }
+					sub.open = false
+					close(sub.ch)
+					delete(c.subscribers, id)
+				}
+			}
+
+		case lookupReq := <-c.lookupC:
+			var exists bool
+			response := subscriberResponse[T]{}
+			// check for consumer existence
+			// ensure channel exists first
+			sub, exists := c.subscribers[lookupReq.consumerID]
+			if exists {
+				response.ch = sub.ch
+				response.found = exists
+			}
+
+			response.lastMessage = c.lastMessage
+			lookupReq.ch <- response
+
+		case addReq := <-c.addC:
+			// handles adding new subscriptions
+			if _, exists := c.subscribers[addReq.consumerID]; !exists {
+				c.subscribers[addReq.consumerID] = &subscriber[T]{
+					ch:   addReq.ch,
+					open: true,
+					// doneC: make(chan struct{}, 1),
+				}
+			}
+
+		case message := <-c.publishC:
+			c.lastMessage = &message
+			// handles broadcasting a message to all subscribers.
+			for _, sub := range c.subscribers {
+				go sub.send(message)
+
+			}
+		}
 	}
 }
 
-func (ch *channel[T]) message() T {
-	ch.mu.RLock()
-	defer ch.mu.RUnlock()
-	return *ch.lastMessage
-}
-
-func (ch *channel[T]) get(id string) (*Consumer[T], bool) {
-	ch.mu.RLock()
-	defer ch.mu.RUnlock()
-	consumer, exists := ch.consumers[id]
-	return consumer, exists
-}
-
-func (ch *channel[T]) len() int {
-	ch.mu.RLock()
-	defer ch.mu.RUnlock()
-	return len(ch.consumers)
-}
-
-func (ch *channel[T]) broadcast(message T) {
-	// write lock the last message
-	ch.mu.Lock()
-	ch.lastMessage = &message
-	ch.mu.Unlock()
-
-	// read lock the consumer map
-	ch.mu.RLock()
-	for _, consumer := range ch.consumers {
-		consumer.send(message)
-	}
-	ch.mu.RUnlock()
-}
-
-func (ch *channel[T]) subscribe(id string, consumer *Consumer[T]) {
-	c, exists := ch.get(id)
-	if !exists {
-		// write lock the consumers map
-		ch.mu.Lock()
-		c = consumer
-		ch.consumers[id] = c
-		ch.mu.Unlock()
+func (c *channel[T]) Subscribe(consumerID string, bufferSize int) chan T {
+	if bufferSize < 1 {
+		bufferSize = 1
 	}
 
-	// read lock the last message
-	ch.mu.RLock()
-	last := ch.lastMessage
-	ch.mu.RUnlock()
-
-	if last != nil {
-		c.send(*last)
+	var sub chan T
+	// attempt to do a lookup to se if it already exists
+	request := subscriberRequest[T]{
+		consumerID: consumerID,
+		ch:         make(chan subscriberResponse[T], 1),
 	}
 
-	return
+	// fmt.Printf("**DEBUG %s sending lookup request for %s\n", c.id, request.consumerID)
+	c.lookupC <- request
+	response := <-request.ch
 
+	close(request.ch)
+
+	if !response.found {
+		// create the subscriber channel
+		// add it and return it.
+		sub = make(chan T, bufferSize)
+		c.addC <- addRequest[T]{
+			consumerID: consumerID,
+			ch:         sub,
+		}
+	} else {
+		sub = response.ch
+	}
+
+	if response.lastMessage != nil {
+		select {
+		case sub <- *response.lastMessage:
+			// fmt.Println("able to push message")
+			// try to push last message in
+		default:
+			// fmt.Println("not able to push, pop one")
+			// buffer was full
+			<-sub // pop one
+			// fmt.Println("now push one")
+			sub <- *response.lastMessage // push one
+		}
+	}
+
+	return sub
 }
 
-// unsubscribe will remove a consumer from the channel map by its id
-func (ch *channel[T]) unsubscribe(id string) {
-	consumer, exists := ch.get(id)
-	if !exists {
-		return
-	}
-	// consumer cleanup
-	consumer.close()
-
-	ch.mu.Lock()
-	defer ch.mu.Unlock()
-	// channel map cleanup
-	delete(ch.consumers, id)
-
+func (c *channel[T]) Unsubscribe(consumerID string) {
+	c.removeC <- consumerID
 }
 
-// unsubscribe will remove a consumer from the channel map by its id
-func (ch *channel[T]) close() {
-	// read lock consumer map while we close
-	ch.mu.RLock()
-	for _, consumer := range ch.consumers {
-		consumer.close()
-	}
-	ch.mu.RUnlock()
+func (c *channel[T]) Close() {
+	c.doneC <- struct{}{}
+}
 
-	// write lock last message
-	ch.mu.Lock()
-	ch.lastMessage = nil
-	ch.mu.Unlock()
-
-	// write lock consumer map
-	ch.mu.Lock()
-	ch.consumers = make(map[string]*Consumer[T])
-	ch.mu.Unlock()
+func (c *channel[T]) Publish(message T) {
+	c.publishC <- message
 }
