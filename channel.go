@@ -16,7 +16,6 @@ type channel[T any] struct {
 
 	requestC   chan any
 	broadcastC chan any
-	closed     bool
 }
 
 // newChannel returns a new channel instance.
@@ -31,7 +30,6 @@ func newChannel[T any](parent context.Context, topic string, publisher chan T) *
 
 		requestC:   make(chan any, 1),
 		broadcastC: make(chan any, 1),
-		closed:     false,
 	}
 
 	go ch.broadcaster()
@@ -211,10 +209,6 @@ func (c *channel[T]) get(consumer string) (chan T, bool) {
 		responseC: make(chan channelLookupResponse[T], 1),
 	}
 
-	if c.closed {
-		return nil, false
-	}
-
 	// send request
 	select {
 	case <-c.ctx.Done(): // watch for cancellation
@@ -222,9 +216,6 @@ func (c *channel[T]) get(consumer string) (chan T, bool) {
 	case c.requestC <- request:
 	}
 
-	if c.closed {
-		return nil, false
-	}
 	// wait for response
 	select {
 	case <-c.ctx.Done(): // watch for cancellation
@@ -244,17 +235,10 @@ func (c *channel[T]) subscribe(consumer string, conf ConsumerConfig) chan T {
 		responseC: make(chan channelSubscribeResponse[T], 1),
 	}
 
-	if c.closed {
-		return nil
-	}
 	// send request
 	select {
 	case <-c.ctx.Done(): // watch for cancellation
 	case c.requestC <- request:
-	}
-
-	if c.closed {
-		return nil
 	}
 
 	// wait for response
@@ -274,18 +258,10 @@ func (c *channel[T]) unsubscribe(consumer string) error {
 		responseC: make(chan error, 1),
 	}
 
-	if c.closed {
-		return nil
-	}
-
 	// send request
 	select {
 	case <-c.ctx.Done(): // watch for cancellation
 	case c.requestC <- request:
-	}
-
-	if c.closed {
-		return nil
 	}
 
 	// wait for response
