@@ -1,26 +1,42 @@
 package intracom
 
-type publishRequest[T any] struct {
-	consumerID string
-	message    T
+// channelLookupRequest represents a request to lookup a channel by its ID.
+type channelLookupRequest[T any] struct {
+	id        string
+	responseC chan channelLookupResponse[T]
 }
 
-type addRequest[T any] struct {
-	consumerID string
-	ch         chan T
+// channelLookupResponse represents the response to a channel lookup request.
+type channelLookupResponse[T any] struct {
+	ch    chan T
+	found bool
 }
 
-type subscriberRequest[T any] struct {
-	consumerID string
-	ch         chan subscriberResponse[T]
+// channelSubscribeRequest represents a request to subscribe to a channel.
+type channelSubscribeRequest[T any] struct {
+	id        string
+	conf      ConsumerConfig
+	ch        chan T
+	responseC chan channelSubscribeResponse[T]
 }
 
-type subscriberResponse[T any] struct {
-	ch          chan T
-	found       bool
-	lastMessage *T
+// channelSubscribeResponse represents the response to a channel subscribe request.
+type channelSubscribeResponse[T any] struct {
+	ch     chan T
+	exists bool
 }
 
-type removeRequest struct {
-	consumerID string
+// channelUnsubscribeRequest represents a request to unsubscribe from a channel.
+type channelUnsubscribeRequest[T any] struct {
+	id        string
+	responseC chan error
 }
+
+// channelUnsubscribeResponse represents the response to a channel unsubscribe request.
+type channelUnsubscribeResponse[T any] struct {
+	ch      chan T
+	success bool
+}
+
+// channelCloseRequest represents a signal request to close a channel.
+type channelCloseRequest struct{}

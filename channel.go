@@ -1,201 +1,305 @@
 package intracom
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
-type subscriber[T any] struct {
-	rxC chan T
-	txC chan T
-
-	ch   chan T
-	open bool
-	// doneC chan struct{}
-}
-
-func (s *subscriber[T]) manager() {
-	for recvMsg := range s.rxC {
-		select {
-		case s.ch <- recvMsg:
-		default:
-			<-s.ch          // pop one
-			s.ch <- recvMsg // push one
-		}
-	}
-}
-
-func (s *subscriber[T]) send(message T) {
-	if s.open {
-		select {
-		case s.ch <- message:
-		default:
-			fmt.Println("pop one")
-			_, open := <-s.ch
-			if !open {
-				fmt.Println("channel was closed")
-				return
-			}
-			fmt.Println("push one")
-			// <-s.ch          // pop one
-			s.ch <- message // push one
-		}
-	}
-}
-
-// // channel represents a single channel topic which holds all subscriptions to that topic
+// channel represents a single topic in the Intracom instance.
 type channel[T any] struct {
-	id          string
-	subscribers map[string]*subscriber[T]
-	lastMessage *T
+	ctx    context.Context
+	cancel context.CancelFunc
 
-	addC     chan addRequest[T]
-	removeC  chan string
-	lookupC  chan subscriberRequest[T]
+	topic string
+
 	publishC chan T
 
-	doneC chan struct{}
+	requestC   chan any
+	broadcastC chan any
+	closed     bool
 }
 
-func newChannel[T any](name string) *channel[T] {
+// newChannel returns a new channel instance.
+func newChannel[T any](parent context.Context, topic string, publisher chan T) *channel[T] {
+	ctx, cancel := context.WithCancel(parent)
 	ch := &channel[T]{
-		id: name,
+		ctx:    ctx,
+		cancel: cancel,
 
-		subscribers: make(map[string]*subscriber[T]),
+		topic:    topic,
+		publishC: publisher,
 
-		addC:     make(chan addRequest[T], 1),
-		removeC:  make(chan string, 1),
-		lookupC:  make(chan subscriberRequest[T], 1),
-		publishC: make(chan T, 1),
-
-		doneC:       make(chan struct{}, 1),
-		lastMessage: nil,
+		requestC:   make(chan any, 1),
+		broadcastC: make(chan any, 1),
+		closed:     false,
 	}
 
-	// manages shared state via message passing
-	go ch.startManager()
+	go ch.broadcaster()
+	// launch background routine to handle channel requests
+	go ch.start()
 	return ch
 }
 
-func (c *channel[T]) startManager() {
-	// defer fmt.Println("exiting channel manager")
+// broadcaster is a blocking function that will handle all requests to the channel.
+// it will also handle broadcasting messages to all subscribers.
+func (c *channel[T]) broadcaster() {
+	subscribers := make(map[string]chan T)
+
+	// NOTE: this nil publish channel is conditionally hot-swapped for an active channel
+	var publish chan T // reading a nil channel causes blocking until its not nil
+
 	for {
 		select {
-		case <-c.doneC:
-			// receive a done signal, close all subscribers.
-			for _, s := range c.subscribers {
-				if s.open {
-					// if its not already closed, close it.
-					s.open = false
-					close(s.ch)
-				}
+		case <-c.ctx.Done():
+			// close all subscriber channels.
+			for _, ch := range subscribers {
+				close(ch)
 			}
-			// clear the map
-			c.subscribers = make(map[string]*subscriber[T])
-			// fmt.Printf("exiting channel %s...", c.id)
+			subscribers = nil // nil for gc
 			return
 
-		case id := <-c.removeC:
-			if sub, exists := c.subscribers[id]; exists {
-				if sub.open {
-					// c.subscribers[id] = &subscriber[T]{
-					// 	open:  false,
-					// 	ch:    sub.ch,
-					// 	doneC: make(chan struct{}, 1),
-					// }
-					sub.open = false
-					close(sub.ch)
-					delete(c.subscribers, id)
+		case request := <-c.broadcastC:
+			// if a request comes in during a broadcast, selecting this case will
+			// pause publishing long enough to update subscriber map
+			// then continue publishing.
+			switch r := request.(type) {
+			case channelCloseRequest:
+				for _, ch := range subscribers {
+					close(ch)
 				}
-			}
+				publish = nil     // nil for gc
+				subscribers = nil // nil for gc
+				return
 
-		case lookupReq := <-c.lookupC:
-			var exists bool
-			response := subscriberResponse[T]{}
-			// check for consumer existence
-			// ensure channel exists first
-			sub, exists := c.subscribers[lookupReq.consumerID]
-			if exists {
-				response.ch = sub.ch
-				response.found = exists
-			}
+			case channelUnsubscribeRequest[T]:
+				// attempt to remove from subscriber map so the publisher is able to
+				//  detach before requester cancels the consumer channel.
+				ch, exists := subscribers[r.id]
+				if exists {
+					delete(subscribers, r.id)
+					close(ch)
+					if len(subscribers) < 1 {
+						publish = nil // stop broadcaster from reading published messages.
+					}
 
-			response.lastMessage = c.lastMessage
-			lookupReq.ch <- response
-
-		case addReq := <-c.addC:
-			// handles adding new subscriptions
-			if _, exists := c.subscribers[addReq.consumerID]; !exists {
-				c.subscribers[addReq.consumerID] = &subscriber[T]{
-					ch:   addReq.ch,
-					open: true,
-					// doneC: make(chan struct{}, 1),
+					r.responseC <- nil
+					continue
 				}
+				r.responseC <- fmt.Errorf("cannot unsubscribe '%s', does not exist", r.id)
+
+			case channelSubscribeRequest[T]:
+				ch, exists := subscribers[r.id]
+				if !exists {
+					subscriberC := make(chan T, r.conf.BufferSize)
+					subscribers[r.id] = subscriberC
+					ch = subscriberC
+					if len(subscribers) > 0 {
+						// swap nil publish channel since we have consumers now.
+						publish = c.publishC
+					}
+				}
+				// if channel did not exist then success represents success at adding the NEW channel.
+				r.responseC <- channelSubscribeResponse[T]{ch: ch, exists: exists}
+
 			}
 
-		case message := <-c.publishC:
-			c.lastMessage = &message
-			// handles broadcasting a message to all subscribers.
-			for _, sub := range c.subscribers {
-				go sub.send(message)
-
+		// NOTE: Anytime select chooses ctx.Done or broadcastC, it interrupts the publishing.
+		// So ideally we only want to send requests to broadcastC if they are necessary, such as:
+		// the creation or deletion of a subscriber because we need to update the subscribers map
+		// between publishing.
+		case msg := <-publish:
+			for _, sub := range subscribers {
+				select {
+				case <-c.ctx.Done():
+					return
+				case sub <- msg:
+					// pipe the new message to each subscriber
+				}
 			}
 		}
 	}
+
+	//
 }
 
-func (c *channel[T]) Subscribe(consumerID string, bufferSize int) chan T {
-	if bufferSize < 1 {
-		bufferSize = 1
-	}
+// start is a blocking function that will handle all requests to the channel.
+func (c *channel[T]) start() {
+	subscribers := make(map[string]chan T)
 
-	var sub chan T
-	// attempt to do a lookup to se if it already exists
-	request := subscriberRequest[T]{
-		consumerID: consumerID,
-		ch:         make(chan subscriberResponse[T], 1),
-	}
-
-	// fmt.Printf("**DEBUG %s sending lookup request for %s\n", c.id, request.consumerID)
-	c.lookupC <- request
-	response := <-request.ch
-
-	close(request.ch)
-
-	if !response.found {
-		// create the subscriber channel
-		// add it and return it.
-		sub = make(chan T, bufferSize)
-		c.addC <- addRequest[T]{
-			consumerID: consumerID,
-			ch:         sub,
-		}
-	} else {
-		sub = response.ch
-	}
-
-	if response.lastMessage != nil {
+	for {
 		select {
-		case sub <- *response.lastMessage:
-			// fmt.Println("able to push message")
-			// try to push last message in
-		default:
-			// fmt.Println("not able to push, pop one")
-			// buffer was full
-			<-sub // pop one
-			// fmt.Println("now push one")
-			sub <- *response.lastMessage // push one
+		case <-c.ctx.Done():
+			subscribers = nil
+			return
+
+		case request := <-c.requestC:
+			switch r := request.(type) {
+			case channelCloseRequest:
+				// signal closing of the channel
+				c.broadcastC <- r // forward to broadcaster
+				subscribers = nil // subscribers cleanup
+				return
+
+			case channelLookupRequest[T]:
+				// lookup subscribers in local subscribers map cache
+				// prevents us from disturbing the broadcaster for lookups
+				ch, exists := subscribers[r.id]
+				r.responseC <- channelLookupResponse[T]{ch: ch, found: exists}
+
+			case channelSubscribeRequest[T]:
+				// check local cache for reference to NOT interrupt broadcaster unless needed.
+				if ch, exists := subscribers[r.id]; exists {
+					r.responseC <- channelSubscribeResponse[T]{ch: ch, exists: true}
+					continue
+				}
+
+				bRequest := channelSubscribeRequest[T]{
+					id:        r.id,
+					conf:      r.conf,
+					responseC: make(chan channelSubscribeResponse[T], 1),
+				}
+
+				// subscriber id does not exist in local cache, broadcaster needs update too.
+				c.broadcastC <- bRequest // forward channel request to broadcaster
+				response := <-bRequest.responseC
+
+				if !response.exists {
+					// update our local references
+					subscribers[r.id] = r.ch
+				}
+
+				r.responseC <- channelSubscribeResponse[T]{
+					ch:     response.ch,
+					exists: response.exists,
+				} // reply to requester
+
+			case channelUnsubscribeRequest[T]:
+				// check local cache for reference to NOT interrupt broadcaster unless needed.
+				if _, exists := subscribers[r.id]; !exists {
+					r.responseC <- fmt.Errorf("cannot unsubscribe '%s', does not exist", r.id)
+					continue
+				}
+
+				bRequest := channelUnsubscribeRequest[T]{
+					id:        r.id,
+					responseC: make(chan error, 1),
+				}
+
+				// subscriber id does not exist in local cache, broadcaster needs update too.
+				// forward the broadcaster a unsubscribe request
+				c.broadcastC <- bRequest
+				err := <-bRequest.responseC
+				close(bRequest.responseC) // nil for gc
+
+				if err == nil {
+					delete(subscribers, r.id)
+				}
+
+				r.responseC <- err // reply to requester
+
+			default:
+				fmt.Printf("error: channel '%s' receiving unknown requests\n", c.topic)
+			}
 		}
 	}
-
-	return sub
 }
 
-func (c *channel[T]) Unsubscribe(consumerID string) {
-	c.removeC <- consumerID
+// get will attempt to retrieve a channel for the given consumer.
+func (c *channel[T]) get(consumer string) (chan T, bool) {
+	request := channelLookupRequest[T]{
+		id:        consumer,
+		responseC: make(chan channelLookupResponse[T], 1),
+	}
+
+	if c.closed {
+		return nil, false
+	}
+
+	// send request
+	select {
+	case <-c.ctx.Done(): // watch for cancellation
+		return nil, false
+	case c.requestC <- request:
+	}
+
+	if c.closed {
+		return nil, false
+	}
+	// wait for response
+	select {
+	case <-c.ctx.Done(): // watch for cancellation
+		return nil, false
+	case response := <-request.responseC:
+		return response.ch, response.found
+	}
 }
 
-func (c *channel[T]) Close() {
-	c.doneC <- struct{}{}
+// subscribe will attempt to subscribe to the channel.
+// if the channel does not exist, it will be created.
+func (c *channel[T]) subscribe(consumer string, conf ConsumerConfig) chan T {
+
+	request := channelSubscribeRequest[T]{
+		id:        consumer,
+		conf:      conf,
+		responseC: make(chan channelSubscribeResponse[T], 1),
+	}
+
+	if c.closed {
+		return nil
+	}
+	// send request
+	select {
+	case <-c.ctx.Done(): // watch for cancellation
+	case c.requestC <- request:
+	}
+
+	if c.closed {
+		return nil
+	}
+
+	// wait for response
+	select {
+	case <-c.ctx.Done(): // watch for cancellation
+		return nil
+	case response := <-request.responseC:
+		return response.ch
+	}
 }
 
-func (c *channel[T]) Publish(message T) {
-	c.publishC <- message
+// unsubscribe will attempt to unsubscribe from the channel.
+// if the channel does not exist, an error will be returned.
+func (c *channel[T]) unsubscribe(consumer string) error {
+	request := channelUnsubscribeRequest[T]{
+		id:        consumer,
+		responseC: make(chan error, 1),
+	}
+
+	if c.closed {
+		return nil
+	}
+
+	// send request
+	select {
+	case <-c.ctx.Done(): // watch for cancellation
+	case c.requestC <- request:
+	}
+
+	if c.closed {
+		return nil
+	}
+
+	// wait for response
+	select {
+	case <-c.ctx.Done(): // watch for cancellation
+		return nil
+	case err := <-request.responseC:
+		return err
+	}
+}
+
+// close will attempt to close the channel.
+// if the channel does not exist, an error will be returned.
+func (c *channel[T]) close() {
+	// send close request signal
+	c.requestC <- channelCloseRequest{}
 }

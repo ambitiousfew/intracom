@@ -1,24 +1,54 @@
 package intracom
 
-// registerRequest for the creation of a channel topic
-type registerRequest[T any] struct {
-	topicID string
-	channel *channel[T]
+// intracomLookupRequest represents a request to lookup a value of type T in a topic.
+type intracomLookupRequest[T any] struct {
+	topic     string
+	consumer  string
+	responseC chan intracomLookupResponse[T]
 }
 
-// channelRequest for the requested retrieval of a channel
-type channelRequest[T any] struct {
-	topicID string
-	ch      chan channelResponse[T]
+// intracomLookupResponse represents the response to a lookup request.
+type intracomLookupResponse[T any] struct {
+	ch    chan T
+	found bool
 }
 
-// channelResponse for the retrieval response of a channel
-type channelResponse[T any] struct {
-	channel *channel[T]
-	found   bool
+// intracomSubscribeRequest represents a request to subscribe to a topic and receive values of type T.
+type intracomSubscribeRequest[T any] struct {
+	conf      *ConsumerConfig
+	topic     string
+	consumer  string
+	ch        chan T
+	responseC chan intracomSubscribeResponse[T]
 }
 
-// unregisterRequest for the removal of a channel topic
-type unregisterRequest struct {
-	topicID string
+// intracomSubscribeResponse represents the response to a subscribe request.
+type intracomSubscribeResponse[T any] struct {
+	ch      chan T
+	success bool
+}
+
+// intracomUnsubscribeRequest represents a request to unsubscribe from a topic.
+type intracomUnsubscribeRequest[T any] struct {
+	topic     string
+	consumer  string
+	responseC chan bool
+}
+
+// intracomRegisterRequest represents a request to register a topic with a publish channel of type T.
+type intracomRegisterRequest[T any] struct {
+	topicID   string
+	responseC chan intracomRegisterResponse[T]
+}
+
+// intracomRegisterResponse represents the response to a register request.
+type intracomRegisterResponse[T any] struct {
+	publishC chan T
+	found    bool
+}
+
+// intracomUnregisterRequest represents a request to unregister a topic.
+type intracomUnregisterRequest struct {
+	topicID   string
+	responseC chan bool
 }

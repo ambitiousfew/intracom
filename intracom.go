@@ -1,134 +1,281 @@
 package intracom
 
+import (
+	"context"
+	"fmt"
+)
+
+// Intracom is a thread-safe in-memory pub/sub implementation.
 type Intracom[T any] struct {
-	// channel -> subscription -> subscriber channel
+	// ctx is the context that will be used to cancel all work being done by the Intracom instance.
+	ctx context.Context
+	// channels is an in-memory map primarily used to lookup the publishing channels by topic name
 	channels map[string]*channel[T]
 
-	lookupC     chan channelRequest[T]
-	registerC   chan registerRequest[T]
-	unregisterC chan unregisterRequest
-
-	doneC chan struct{}
+	// requestC is the channel that will be used to send requests to the Intracom instance.
+	requestC chan any
 }
 
-func New[T any]() *Intracom[T] {
+// New returns a new Intracom instance.
+func New[T any](ctx context.Context) *Intracom[T] {
 	ic := &Intracom[T]{
+		ctx:      ctx,
 		channels: make(map[string]*channel[T]),
-
-		lookupC:     make(chan channelRequest[T], 1),
-		registerC:   make(chan registerRequest[T], 1),
-		unregisterC: make(chan unregisterRequest, 1),
-
-		doneC: make(chan struct{}, 1),
+		requestC: make(chan any, 1),
 	}
 
-	// manages shared state via message passing
-	go ic.startManager()
+	// start the Intracom instance request handler
+	go ic.start()
 	return ic
 }
 
-func (i *Intracom[T]) startManager() {
-	// defer fmt.Println("exiting intracom manager")
+// start is a blocking function that will handle all requests to the Intracom instance.
+func (i *Intracom[T]) start() {
 	for {
 		select {
-		case <-i.doneC:
-			// fmt.Println("exiting intracom...")
+		case <-i.ctx.Done():
+			for _, ch := range i.channels {
+				ch.close() // close waiting for signal of completion
+			}
 			return
-		case unregReq := <-i.unregisterC:
-			// TODO:
-			channel, exists := i.channels[unregReq.topicID]
-			if !exists {
-				// channel doesnt exist, we are done consumer cant exist
-				// fmt.Println("DEBUG: Channel doesnt exist, cannot remove it.")
-				continue
-			}
 
-			// send done signal to channel
-			channel.Close()
-			// fmt.Println("call the channel.unsubscribe() method")
-			// channel.unsubscribe(unregReq.consumerID)
+		case request := <-i.requestC:
+			switch r := request.(type) {
+			case intracomUnregisterRequest:
+				if ch, exists := i.channels[r.topicID]; !exists {
+					r.responseC <- false
+				} else {
+					// to unregister a topic, we need to stop all work being done.
+					ch.close()
+					r.responseC <- true
+				}
 
-		case regReq := <-i.registerC:
-			// fmt.Printf("DEBUG: registering %s\n", regReq.topicID)
-			_, exists := i.channels[regReq.topicID]
-			if !exists {
-				i.channels[regReq.topicID] = newChannel[T](regReq.topicID)
-				// fmt.Printf("DEBUG: channel '%s' doesnt exist, lookup complete\n", regReq.topicID)
-			}
+			case intracomLookupRequest[T]:
+				c, exists := i.channels[r.topic]
+				if exists {
+					// topic exists, pass back existing channel
+					ch, found := c.get(r.consumer)
+					r.responseC <- intracomLookupResponse[T]{ch: ch, found: found}
+					continue
+				}
+				r.responseC <- intracomLookupResponse[T]{ch: nil, found: false}
 
-		case lookupReq := <-i.lookupC:
-			// check for consumer existence
-			// ensure channel exists first
-			channel, exists := i.channels[lookupReq.topicID]
-			// if !exists {
-			// channel doesnt exist, we are done consumer cant exist
-			// fmt.Printf("DEBUG: channel '%s' doesnt exist, lookup complete\n", lookupReq.topicID)
-			// }
-			lookupReq.ch <- channelResponse[T]{
-				channel: channel,
-				found:   exists,
+			case intracomRegisterRequest[T]:
+				ch, exists := i.channels[r.topicID]
+				if !exists {
+					// topic does not exist, create it
+					publishC := make(chan T)
+					ch = newChannel[T](i.ctx, r.topicID, publishC)
+					i.channels[r.topicID] = newChannel[T](i.ctx, r.topicID, publishC)
+				}
+				// respond to request
+				r.responseC <- intracomRegisterResponse[T]{publishC: ch.publishC, found: exists}
+
+			case intracomUnsubscribeRequest[T]:
+				ch, exists := i.channels[r.topic]
+				if !exists {
+					r.responseC <- false
+					continue
+				}
+				err := ch.unsubscribe(r.consumer)
+				r.responseC <- err == nil
+
+			case intracomSubscribeRequest[T]:
+				ch, exists := i.channels[r.conf.Topic]
+				if !exists {
+					// channel topic doesnt exist, create new one with subscriber added.
+					publishC := make(chan T, 1)
+					ch := newChannel[T](i.ctx, r.conf.Topic, publishC)
+
+					i.channels[r.conf.Topic] = ch
+
+					subscriberC := make(chan T, r.conf.BufferSize)
+					// subscribe a consumer
+					ch.subscribe(r.conf.ConsumerGroup, *r.conf)
+
+					// pass back subscriber response
+					r.responseC <- intracomSubscribeResponse[T]{
+						ch:      subscriberC,
+						success: true,
+					}
+					continue
+				}
+
+				subscriberC, found := ch.get(r.consumer)
+				if !found {
+					// if the topic existed but the consumer did not.
+					subscriberC = ch.subscribe(r.consumer, *r.conf)
+				}
+
+				r.responseC <- intracomSubscribeResponse[T]{
+					ch:      subscriberC,
+					success: true,
+				}
+
+			default:
+				fmt.Println("error: intracom processing unknown requests")
 			}
 		}
 	}
 }
 
-// Register will create a channel topic and consumer.
-func (i *Intracom[T]) Register(topic string) *channel[T] {
-	// first perform a subscription lookup in case subscriber already exists
-	// because we want dont want to accidentally create and replace the old
-	// subscriber channel
-	request := channelRequest[T]{
-		topicID: topic,
-		ch:      make(chan channelResponse[T], 1),
+// Register will create a topic and give back a channel to publish on and an unregister function
+// that if called will unregister the topic name that was registered with this Register call.
+func (i *Intracom[T]) Register(topic string) (chan<- T, func() bool) {
+	request := intracomRegisterRequest[T]{
+		topicID:   topic,
+		responseC: make(chan intracomRegisterResponse[T], 1),
+	}
+	// send request to register topic
+	select {
+	case <-i.ctx.Done():
+		return nil, i.unregister("")
+	case i.requestC <- request:
 	}
 
-	// send request
-	// fmt.Printf("DEBUG: Sending request to register %s\n", topic)
-	i.lookupC <- request
+	// wait for response or cancellation
+	select {
+	case <-i.ctx.Done():
+		return nil, nil
+	case response := <-request.responseC:
+		close(request.responseC)
+		// return publisher channel and an unregister func reference tied to this topic registration.
+		return response.publishC, i.unregister(topic)
+	}
+}
 
-	// fmt.Printf("DEBUG: Waiting for response %s\n", topic)
-	// block, waiting for a response
-	response := <-request.ch
-	close(request.ch)
-	// fmt.Printf("DEBUG: Received response %s found:%v\n", topic, response.found)
+func (i *Intracom[T]) Subscribe(conf *ConsumerConfig) (<-chan T, func() bool) {
+	if conf == nil {
+		// cant allow nil consumer configs, default it if nil.
+		// TODO: log warning
+		conf.Topic = ""
+		conf.ConsumerGroup = ""
+		conf.BufferSize = 1
+		conf.BufferPolicy = DropNone
+	} else {
+		// Buffer size should always be at least 1
+		if conf.BufferSize < 1 {
+			conf.BufferSize = 1
+		}
+	}
 
-	if !response.found {
-		// if the channel doesnt exist, create it.
-		channel := newChannel[T](topic)
-		i.registerC <- registerRequest[T]{
-			topicID: topic,
-			channel: channel,
+	// lookup existing consumer first.
+	lookupR := intracomLookupRequest[T]{
+		topic:     conf.Topic,
+		consumer:  conf.ConsumerGroup,
+		responseC: make(chan intracomLookupResponse[T], 1),
+	}
+
+	// if consumer channel does exist, reuse
+	// send lookup request
+	select {
+	case <-i.ctx.Done():
+		return nil, nil
+	case i.requestC <- lookupR:
+	}
+
+	// wait for lookup response
+	select {
+	case <-i.ctx.Done():
+		return nil, nil
+	case lookupResp := <-lookupR.responseC:
+		close(lookupR.responseC)
+		if lookupResp.found {
+			// found existing consumer in channels
+			return lookupResp.ch, i.unsubscribe(conf.Topic, conf.ConsumerGroup)
+		}
+	}
+
+	// if existing consumer doesnt exist, then create
+	subscribeR := intracomSubscribeRequest[T]{
+		conf:      conf,
+		topic:     conf.Topic,
+		consumer:  conf.ConsumerGroup,
+		ch:        make(chan T, conf.BufferSize),
+		responseC: make(chan intracomSubscribeResponse[T], 1),
+	}
+
+	// send subscribe request
+	select {
+	case <-i.ctx.Done():
+		return nil, i.unsubscribe("", "")
+	case i.requestC <- subscribeR:
+	}
+
+	// wait for subscribe response
+	select {
+	case <-i.ctx.Done():
+		return nil, nil
+	case subscribeResp := <-subscribeR.responseC:
+		close(subscribeR.responseC)
+
+		if subscribeResp.success {
+			return subscribeResp.ch, i.unsubscribe(conf.Topic, conf.ConsumerGroup)
+		}
+		// could not subscribe for some reason...
+		return subscribeResp.ch, i.unsubscribe("", "")
+	}
+
+}
+
+// unsubscribe returns a closure that contains the topic and consumer name so if called will cancel
+func (i *Intracom[T]) unsubscribe(topic, consumer string) func() bool {
+	return func() bool {
+		if topic == "" && consumer == "" {
+			return false
 		}
 
-		i.registerC <- registerRequest[T]{topicID: topic, channel: channel}
+		request := intracomUnsubscribeRequest[T]{
+			topic:     topic,
+			consumer:  consumer,
+			responseC: make(chan bool, 1),
+		}
 
-		return channel
+		// send request
+		select {
+		case <-i.ctx.Done():
+			return false
+		case i.requestC <- request:
+		}
+
+		// wait for response
+		select {
+		case <-i.ctx.Done():
+			return false
+		case success := <-request.responseC: // wait for response
+			close(request.responseC)
+			return success
+		}
 	}
-
-	return response.channel
 }
 
-func (i *Intracom[T]) Unregister(topic string) {
-	i.unregisterC <- unregisterRequest{
-		topicID: topic,
-		// consumerID: consumerID,
+// unregister returns a closure that contains the topic name so if called will cancel
+func (i *Intracom[T]) unregister(topic string) func() bool {
+	return func() bool {
+		if topic == "" {
+			return false
+		}
+
+		request := intracomUnregisterRequest{
+			topicID:   topic,
+			responseC: make(chan bool, 1),
+		}
+
+		// send request to unregister topic
+		select {
+		case <-i.ctx.Done():
+			return false
+		case i.requestC <- request:
+		}
+
+		// wait for response
+		select {
+		case <-i.ctx.Done():
+			return false
+		case success := <-request.responseC:
+			close(request.responseC)
+			return success
+		}
 	}
+
 }
-
-// func (i *Intracom[T]) Publish(topic string, message T) {
-// 	i.publishC <- publishRequest[T]{
-// 		topicID: topic,
-// 		message: message,
-// 	}
-// }
-
-// Close is safe to call multiple times it will inform the underlying intracom channel manager
-// and all its channels and consumers to stop/close their channels.
-// This will effectively cleanup all open channels and remove all subscriptions.
-// The intracom instance will not be usable after this, a new instance would be required.
-// func (i *Intracom[T]) Close() {
-// 	if !i.closed.Swap(true) {
-// 		// if we swap to true and the old val is false, we arent closed yet.
-// 		i.manager.close()
-// 	}
-// }
