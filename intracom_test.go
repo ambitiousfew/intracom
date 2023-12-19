@@ -2,10 +2,12 @@ package intracom
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestSubscribe(t *testing.T) {
@@ -30,13 +32,14 @@ func TestSubscribe(t *testing.T) {
 	want := true
 
 	// ensure the topic was initialized.
-	ch, got := ic.channels[topic]
-	if got != want {
-		t.Errorf("want %v, got %v", want, got)
+	channel, exists := ic.get(topic)
+	if !exists {
+		t.Errorf("topic channel does not exist: want %v, got %v", want, exists)
 	}
-
 	// ensure the consumer group was created.
-	_, got = ch.get(group)
+	_, got := channel.get(group)
+
+	fmt.Println("---------------")
 	if got != want {
 		t.Errorf("want %v, got %v", want, got)
 	}
@@ -63,16 +66,21 @@ func TestUnsubscribe(t *testing.T) {
 
 	want := true
 	// ensure the topic still exists
-	ch, got := ic.channels[topic]
+	channel, exists := ic.get(topic)
+	if !exists {
+		t.Errorf("topic channel does not exist: want %v, got %v", want, exists)
+	}
+
+	_, got := channel.get(group)
 	if want != got {
-		t.Errorf("want %v, got %v", want, got)
+		t.Errorf("consumer group does not exist: want %v, got %v", want, got)
 	}
 
 	unsubscribe()
 	// TODO: How is it still finding it?
 	want = false
 	// ensure the consumer group no longer exists.
-	if _, got := ch.get(group); want != got {
+	if _, got := channel.get(group); want != got {
 		t.Errorf("want %v, got %v", want, got)
 	}
 }
@@ -103,11 +111,13 @@ func TestMultipleUnSubscribes(t *testing.T) {
 
 	want = false
 	got = unsubscribe() // false when does not exist
+
 	if want != got {
 		t.Errorf("want %v, got %v", want, got)
 	}
 }
 
+// TODO: test the intracom closer
 // func TestIntracomClose(t *testing.T) {
 // 	ic := New[bool]()
 // 	topic := "test-topic"
@@ -229,7 +239,7 @@ func BenchmarkIntracom(b *testing.B) {
 		sub1, _ := ic.Subscribe(&ConsumerConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub1",
-			BufferSize:    10,
+			BufferSize:    1,
 			BufferPolicy:  DropNone,
 		})
 
@@ -242,7 +252,7 @@ func BenchmarkIntracom(b *testing.B) {
 		sub2, _ := ic.Subscribe(&ConsumerConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub2",
-			BufferSize:    10,
+			BufferSize:    1,
 			BufferPolicy:  DropNone,
 		})
 
@@ -255,14 +265,15 @@ func BenchmarkIntracom(b *testing.B) {
 		sub3, _ := ic.Subscribe(&ConsumerConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub3",
-			BufferSize:    10,
+			BufferSize:    1,
 			BufferPolicy:  DropNone,
 		})
 
 		countMessages[string](ctx, b.N, sub3, totalSub3)
 	}()
 
-	// time.Sleep(100 * time.Millisecond)
+	// TODO: without a delay here we end up in a deadlock. Why?
+	time.Sleep(50 * time.Millisecond)
 	b.ResetTimer()
 
 	go func() {
@@ -273,7 +284,6 @@ func BenchmarkIntracom(b *testing.B) {
 		}
 	}()
 
-	// fmt.Println("waiting...")
 	wg.Wait()
 
 	got1 := <-totalSub1

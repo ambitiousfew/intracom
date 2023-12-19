@@ -3,22 +3,18 @@ package intracom
 // intracomLookupRequest represents a request to lookup a value of type T in a topic.
 type intracomLookupRequest[T any] struct {
 	topic     string
-	consumer  string
 	responseC chan intracomLookupResponse[T]
 }
 
 // intracomLookupResponse represents the response to a lookup request.
 type intracomLookupResponse[T any] struct {
-	ch    chan T
-	found bool
+	channel *intracomChannel[T]
+	found   bool
 }
 
 // intracomSubscribeRequest represents a request to subscribe to a topic and receive values of type T.
 type intracomSubscribeRequest[T any] struct {
-	conf      *ConsumerConfig
-	topic     string
-	consumer  string
-	ch        chan T
+	conf      ConsumerConfig
 	responseC chan intracomSubscribeResponse[T]
 }
 
@@ -37,7 +33,7 @@ type intracomUnsubscribeRequest[T any] struct {
 
 // intracomRegisterRequest represents a request to register a topic with a publish channel of type T.
 type intracomRegisterRequest[T any] struct {
-	topicID   string
+	topic     string
 	responseC chan intracomRegisterResponse[T]
 }
 
@@ -49,6 +45,6 @@ type intracomRegisterResponse[T any] struct {
 
 // intracomUnregisterRequest represents a request to unregister a topic.
 type intracomUnregisterRequest struct {
-	topicID   string
+	topic     string
 	responseC chan bool
 }
