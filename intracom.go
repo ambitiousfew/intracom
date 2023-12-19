@@ -45,6 +45,7 @@ func (i *Intracom[T]) broker() {
 			for _, channel := range channels {
 				channel.close() // close waiting for signal of completion
 			}
+
 			ctxDone = nil // prevent this case from being selected again
 			close(i.brokerDoneC)
 
@@ -75,12 +76,11 @@ func (i *Intracom[T]) broker() {
 				r.responseC <- intracomRegisterResponse[T]{publishC: channel.publishC, found: exists}
 
 			case intracomUnsubscribeRequest[T]:
-				channel, exists := channels[r.topic]
-				if !exists {
+				if channel, exists := channels[r.topic]; !exists {
 					r.responseC <- false
-					continue
+				} else {
+					r.responseC <- channel.unsubscribe(r.consumer)
 				}
-				r.responseC <- channel.unsubscribe(r.consumer)
 
 			case intracomSubscribeRequest[T]:
 				channel, exists := channels[r.conf.Topic]
@@ -88,15 +88,15 @@ func (i *Intracom[T]) broker() {
 					// channel topic doesnt exist, create new one with subscriber added.
 					publishC := make(chan T)
 					channel = newIntracomChannel[T](i.ctx, r.conf.Topic, publishC)
+					channels[r.conf.Topic] = channel
 				}
+
 				// subscribe a consumer
 				ch := channel.subscribe(r.conf)
-				channels[r.conf.Topic] = channel
-
 				// pass back subscriber response
 				r.responseC <- intracomSubscribeResponse[T]{
 					ch:      ch,
-					success: true,
+					success: ch != nil,
 				}
 
 			default:

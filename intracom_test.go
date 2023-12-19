@@ -2,7 +2,6 @@ package intracom
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 	"runtime"
 	"sync"
@@ -39,7 +38,6 @@ func TestSubscribe(t *testing.T) {
 	// ensure the consumer group was created.
 	_, got := channel.get(group)
 
-	fmt.Println("---------------")
 	if got != want {
 		t.Errorf("want %v, got %v", want, got)
 	}
@@ -117,7 +115,7 @@ func TestMultipleUnSubscribes(t *testing.T) {
 	}
 }
 
-// TODO: test the intracom closer
+// TODO: Create an Intracom closer
 // func TestIntracomClose(t *testing.T) {
 // 	ic := New[bool]()
 // 	topic := "test-topic"
@@ -273,7 +271,7 @@ func BenchmarkIntracom(b *testing.B) {
 	}()
 
 	// TODO: without a delay here we end up in a deadlock. Why?
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 	b.ResetTimer()
 
 	go func() {

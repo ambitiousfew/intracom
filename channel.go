@@ -63,12 +63,13 @@ func (c *intracomChannel[T]) broadcaster(broadcastC <-chan any, doneC chan<- str
 			// then continue publishing.
 			switch r := request.(type) {
 			case channelCloseRequest:
-				publish = nil // ensure publish case cant be selected
 				for _, ch := range subscribers {
 					close(ch)
 				}
 				subscribers = nil // nil for gc
-				return
+				publish = nil     // ensure publish case cant be selected
+				broadcastC = nil  // prevent this case from being selected again
+				r.responseC <- struct{}{}
 
 			case channelUnsubscribeRequest[T]:
 				// attempt to remove from subscriber map so the publisher is able to
@@ -113,6 +114,7 @@ func (c *intracomChannel[T]) broadcaster(broadcastC <-chan any, doneC chan<- str
 				}
 			}
 		}
+
 	}
 }
 
@@ -148,9 +150,11 @@ func (c *intracomChannel[T]) broker() {
 			switch r := request.(type) {
 			case channelCloseRequest:
 				// signal closing of the channel
-				broadcastC <- r   // forward to broadcaster
-				subscribers = nil // subscribers cleanup
-				// close(c.brokerDoneC)
+				bRequest := channelCloseRequest{responseC: make(chan struct{})}
+				broadcastC <- bRequest // send request
+				<-bRequest.responseC   // wait for response
+				subscribers = nil      // subscribers cleanup
+				c.requestC = nil       // prevent this case from being selected again
 				r.responseC <- struct{}{}
 
 			case channelLookupRequest[T]:
@@ -200,10 +204,10 @@ func (c *intracomChannel[T]) broker() {
 				// subscriber id does not exist in local cache, broadcaster needs update too.
 				// forward the broadcaster a unsubscribe request
 				broadcastC <- bRequest
-				<-bRequest.responseC
+				response := <-bRequest.responseC
 				close(bRequest.responseC) // nil for gc
 				delete(subscribers, r.consumer)
-				r.responseC <- true // reply to requester
+				r.responseC <- response // reply to requester
 
 			default:
 				fmt.Printf("error: channel '%s' receiving unknown requests\n", c.topic)
@@ -221,7 +225,6 @@ func (c *intracomChannel[T]) get(consumer string) (chan T, bool) {
 
 	c.requestC <- request           // send request
 	response := <-request.responseC // wait for response
-
 	return response.ch, response.found
 
 }
@@ -261,5 +264,4 @@ func (c *intracomChannel[T]) close() {
 	c.requestC <- request // send request
 	<-request.responseC   // wait for response
 	close(c.brokerDoneC)
-
 }
