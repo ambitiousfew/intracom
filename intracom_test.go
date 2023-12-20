@@ -18,7 +18,7 @@ func TestSubscribe(t *testing.T) {
 	topic := "test-topic"
 	group := "test-subscriber"
 
-	conf := &ConsumerConfig{
+	conf := &SubscriberConfig{
 		Topic:         topic,
 		ConsumerGroup: group,
 		BufferSize:    1,
@@ -31,15 +31,9 @@ func TestSubscribe(t *testing.T) {
 	want := true
 
 	// ensure the topic was initialized.
-	channel, exists := ic.get(topic)
-	if !exists {
-		t.Errorf("topic channel does not exist: want %v, got %v", want, exists)
-	}
-	// ensure the consumer group was created.
-	_, got := channel.get(group)
-
-	if got != want {
-		t.Errorf("want %v, got %v", want, got)
+	_, got := ic.get(topic, group)
+	if !got {
+		t.Errorf("subscriber does not exist: want %v, got %v", want, got)
 	}
 
 }
@@ -53,7 +47,7 @@ func TestUnsubscribe(t *testing.T) {
 	topic := "test-topic"
 	group := "test-subscriber"
 
-	conf := &ConsumerConfig{
+	conf := &SubscriberConfig{
 		Topic:         topic,
 		ConsumerGroup: group,
 		BufferSize:    1,
@@ -63,23 +57,14 @@ func TestUnsubscribe(t *testing.T) {
 	_, unsubscribe := ic.Subscribe(conf)
 
 	want := true
-	// ensure the topic still exists
-	channel, exists := ic.get(topic)
-	if !exists {
-		t.Errorf("topic channel does not exist: want %v, got %v", want, exists)
-	}
-
-	_, got := channel.get(group)
+	_, got := ic.get(topic, group) // true if exists
 	if want != got {
-		t.Errorf("consumer group does not exist: want %v, got %v", want, got)
+		t.Errorf("subscriber does not exist: want %v, got %v", want, got)
 	}
 
-	unsubscribe()
-	// TODO: How is it still finding it?
-	want = false
-	// ensure the consumer group no longer exists.
-	if _, got := channel.get(group); want != got {
-		t.Errorf("want %v, got %v", want, got)
+	err := unsubscribe()
+	if err != nil {
+		t.Errorf("want nil, got %s", err)
 	}
 }
 
@@ -92,7 +77,7 @@ func TestMultipleUnSubscribes(t *testing.T) {
 	topic := "test-topic"
 	group := "test-subscriber"
 
-	conf := &ConsumerConfig{
+	conf := &SubscriberConfig{
 		Topic:         topic,
 		ConsumerGroup: group,
 		BufferSize:    1,
@@ -101,43 +86,46 @@ func TestMultipleUnSubscribes(t *testing.T) {
 
 	_, unsubscribe := ic.Subscribe(conf)
 
-	want := true
-	got := unsubscribe() // true when exists
-	if want != got {
-		t.Errorf("want %v, got %v", want, got)
+	err := unsubscribe() // nil if succeeds
+	if err != nil {
+		t.Errorf("want nil, got %s", err)
 	}
 
-	want = false
-	got = unsubscribe() // false when does not exist
+	err = unsubscribe() // error if already unsubscribed
 
+	if err == nil {
+		t.Errorf("want nil, got %s", err)
+	}
+}
+
+func TestIntracomClose(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ic := New[bool](ctx)
+
+	topic := "test-topic"
+	group := "test-subscriber"
+
+	conf := &SubscriberConfig{
+		Topic:         topic,
+		ConsumerGroup: group,
+		BufferSize:    1,
+		BufferPolicy:  DropNone,
+	}
+
+	// subscribe and we should receive an immediate message if there is a message in the last message map
+	_, unsubscribe := ic.Subscribe(conf)
+	defer unsubscribe()
+
+	ic.Close()
+
+	want := true
+	got := ic.closed.Load()
 	if want != got {
 		t.Errorf("want %v, got %v", want, got)
 	}
 }
-
-// TODO: Create an Intracom closer
-// func TestIntracomClose(t *testing.T) {
-// 	ic := New[bool]()
-// 	topic := "test-topic"
-// 	id := "test"
-// 	want := true
-
-// 	// subscribe and we should receive an immediate message if there is a message in the last message map
-// 	ic.Subscribe(topic, id, 1)
-// 	defer ic.Unsubscribe(topic, id)
-
-// 	if _, exists := ic.manager.get(topic); !exists {
-// 		t.Errorf("topic '%s' should exist", topic)
-// 	}
-
-// 	ic.Publish(topic, want)
-
-// 	ic.Close()
-
-// 	if _, exists := ic.manager.get(topic); exists {
-// 		t.Errorf("topic '%s' should not exist after close", topic)
-// 	}
-// }
 
 // Testing typed instance creations
 func TestNewBoolTyped(t *testing.T) {
@@ -213,10 +201,9 @@ func countMessages[T any](ctx context.Context, num int, sub <-chan T, subCh chan
 }
 
 func BenchmarkIntracom(b *testing.B) {
-	runtime.GOMAXPROCS(1)
-	// runtime.SetMutexProfileFraction(3)
+	runtime.GOMAXPROCS(1) // force single core
 	ctx, cancel := context.WithCancel(context.Background())
-	// ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
 	defer cancel()
 
 	ic := New[string](ctx)
@@ -230,59 +217,69 @@ func BenchmarkIntracom(b *testing.B) {
 	var wg sync.WaitGroup
 	wg.Add(4)
 
-	publishCh, unregister := ic.Register(topic)
-
 	go func() {
 		defer wg.Done()
-		sub1, _ := ic.Subscribe(&ConsumerConfig{
+		sub1, unsubscribe := ic.Subscribe(&SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub1",
 			BufferSize:    1,
 			BufferPolicy:  DropNone,
 		})
 
+		defer unsubscribe()
+
 		countMessages[string](ctx, b.N, sub1, totalSub1)
-		// unsubscribe()
+		// fmt.Println("sub1 done")
 	}()
 
 	go func() {
 		defer wg.Done()
-		sub2, _ := ic.Subscribe(&ConsumerConfig{
+		sub2, unsubscribe := ic.Subscribe(&SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub2",
 			BufferSize:    1,
 			BufferPolicy:  DropNone,
 		})
+		defer unsubscribe()
 
 		countMessages[string](ctx, b.N, sub2, totalSub2)
+		// fmt.Println("sub2 done")
 	}()
 
 	go func() {
 		defer wg.Done()
 
-		sub3, _ := ic.Subscribe(&ConsumerConfig{
+		sub3, unsubscribe := ic.Subscribe(&SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub3",
 			BufferSize:    1,
 			BufferPolicy:  DropNone,
 		})
+		defer unsubscribe()
 
 		countMessages[string](ctx, b.N, sub3, totalSub3)
+		// fmt.Println("sub3 done")
 	}()
 
-	// TODO: without a delay here we end up in a deadlock. Why?
-	time.Sleep(20 * time.Millisecond)
-	b.ResetTimer()
+	// NOTE: this sleep is necessary to ensure that the subscribers receive all their messages.
+	// without a publisher sleep, subscribers may not be subscribed early enough and would miss messages.
+	time.Sleep(100 * time.Millisecond)
 
 	go func() {
 		defer wg.Done()
-		defer unregister()
+
+		publishCh, unregister := ic.Register(topic)
+		defer unregister() // should be called only after done publishing otherwise it will panic
 		for i := 0; i < b.N; i++ {
 			publishCh <- "test message"
 		}
 	}()
 
+	b.ResetTimer() // reset benchmark timer once we launch the publisher
+
 	wg.Wait()
+
+	ic.Close() // should be called last
 
 	got1 := <-totalSub1
 	if got1 != b.N {

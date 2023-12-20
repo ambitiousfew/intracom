@@ -43,7 +43,7 @@ func main() {
 	go func() { // consumer1 subscribing using intracom instance.
 		defer wg.Done()
 		// consumer 1
-		ch, _ := ic.Subscribe(&intracom.ConsumerConfig{
+		ch, _ := ic.Subscribe(&intracom.SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "consumer1",
 			BufferSize:    10,
@@ -58,7 +58,7 @@ func main() {
 	go func() { // consumer2 subscribing using intracom instance.
 		defer wg.Done()
 		// consumer 2
-		ch, _ := ic.Subscribe(&intracom.ConsumerConfig{
+		ch, _ := ic.Subscribe(&intracom.SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "consumer2",
 			BufferSize:    10,

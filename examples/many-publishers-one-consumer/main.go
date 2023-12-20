@@ -45,7 +45,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		// Create a consumer
-		consumer, unsubscribe := ic.Subscribe(&intracom.ConsumerConfig{
+		consumer, unsubscribe := ic.Subscribe(&intracom.SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "consumer1",
 			BufferSize:    100,
