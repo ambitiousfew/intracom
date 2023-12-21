@@ -130,14 +130,14 @@ func (i *Intracom[T]) unregister(topic string) func() bool {
 			return false
 		}
 
-		request := unregisterRequest{
-			topic:     topic,
-			responseC: make(chan bool),
-		}
-
 		if i.closed.Load() {
 			// intracom is closed, so we cant unregister anymore topics.
 			return false
+		}
+
+		request := unregisterRequest{
+			topic:     topic,
+			responseC: make(chan bool),
 		}
 
 		i.requestC <- request          // send request to unregister topic
@@ -218,11 +218,8 @@ func (i *Intracom[T]) broker() {
 				close(publishC)
 				delete(publishers, topic)
 			}
-
-			broadcasters = nil // nil for gc
-			channels = nil     // nil for gc
-			publishers = nil   // prevent publishers from publishing anymore
-			ctxDone = nil      // prevent signal from being received again
+			// DO NOT nil out the caches, broker handles requests until Close is called.
+			ctxDone = nil // prevent signal from being received again
 
 		case request := <-i.requestC:
 			switch r := request.(type) {
