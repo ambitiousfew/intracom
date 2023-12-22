@@ -20,7 +20,7 @@ func startPublisher(publishC chan<- string) {
 func main() {
 	// a parent context that can be cancelled to end all underlying channels inside Intracom
 	// cleanup performed, Intracom instance is no longer usable after cancel
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	ic := intracom.New[string](ctx)

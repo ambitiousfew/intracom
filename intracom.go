@@ -3,7 +3,6 @@ package intracom
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 )
 
 // Intracom is a thread-safe in-memory pub/sub implementation.
@@ -14,8 +13,6 @@ type Intracom[T any] struct {
 	// requestC is the channel that will be used to send requests to the Intracom instance.
 	requestC    chan any
 	brokerDoneC chan struct{}
-
-	closed atomic.Bool
 }
 
 // New returns a new Intracom instance.
@@ -24,7 +21,6 @@ func New[T any](ctx context.Context) *Intracom[T] {
 		ctx:         ctx,
 		requestC:    make(chan any),
 		brokerDoneC: make(chan struct{}, 1),
-		closed:      atomic.Bool{},
 	}
 
 	go ic.broker() // start the requests broker
@@ -32,15 +28,16 @@ func New[T any](ctx context.Context) *Intracom[T] {
 }
 
 func (i *Intracom[T]) Register(topic string) (chan<- T, func() bool) {
-	request := registerRequest[T]{
+	responseC := make(chan chan T)
+
+	i.requestC <- registerRequest[T]{ // send request
 		topic:     topic,
-		responseC: make(chan chan T),
+		responseC: responseC,
 	}
 
-	i.requestC <- request           // send request
-	publishC := <-request.responseC // wait for response
+	publishC := <-responseC // wait for response, the publisher channel for topic given
+	close(responseC)        // clean up response channel
 
-	close(request.responseC)
 	// return publisher channel and an unregister func reference tied to this topic registration.
 	return publishC, i.unregister(topic)
 
@@ -61,14 +58,15 @@ func (i *Intracom[T]) Subscribe(conf *SubscriberConfig) (<-chan T, func() error)
 		}
 	}
 
-	// no existing consumer found, send subscribe request
-	request := subscribeRequest[T]{
+	responseC := make(chan subscribeResponse[T])
+
+	i.requestC <- subscribeRequest[T]{ // send subscribe request
 		conf:      *conf,
-		responseC: make(chan subscribeResponse[T]),
+		responseC: responseC,
 	}
 
-	i.requestC <- request // send subscribe request
-	response := <-request.responseC
+	response := <-responseC // wait for response, contains subscriber channel and success bool
+	close(responseC)        // clean up response channel
 
 	return response.ch, i.unsubscribe(conf.Topic, conf.ConsumerGroup)
 }
@@ -77,47 +75,44 @@ func (i *Intracom[T]) Subscribe(conf *SubscriberConfig) (<-chan T, func() error)
 // Intracom instance will no longer be usable after calling this function.
 // NOTE: Calling Register or Subscribe after calling Close will panic.
 func (i *Intracom[T]) Close() {
-	i.closed.Store(true) // mark instance as closed and unuseable.
+	responseC := make(chan struct{}) // channel for request broker to signal when done
 
-	request := closeRequest{responseC: make(chan struct{})}
-	i.requestC <- request
-	<-request.responseC
+	i.requestC <- closeRequest{responseC: responseC} // send close request
+	<-responseC                                      // wait for response signal
 
+	close(responseC)     // clean up response channel
 	close(i.requestC)    // signal broker to stop processing requests
 	close(i.brokerDoneC) // signal broker to shutdown
 }
 
 func (i *Intracom[T]) get(topic, consumer string) (<-chan T, bool) {
-	request := lookupRequest[T]{
+	responseC := make(chan lookupResponse[T])
+
+	i.requestC <- lookupRequest[T]{ // send request
 		topic:     topic,
 		consumer:  consumer,
-		responseC: make(chan lookupResponse[T]),
+		responseC: responseC,
 	}
+	response := <-responseC // wait for lookup response
+	close(responseC)        // clean up response channel
 
-	i.requestC <- request           // send request
-	response := <-request.responseC // wait for response
-	close(request.responseC)
-
+	// return subscriber channel (or nil) and a boolean indicating if it was found.
 	return response.ch, response.found
 }
 
 // unsubscribe returns a closure that contains the topic and consumer name so if called will cancel
 func (i *Intracom[T]) unsubscribe(topic, consumer string) func() error {
 	return func() error {
-		request := unsubscribeRequest[T]{
+		responseC := make(chan error)
+
+		i.requestC <- unsubscribeRequest[T]{ // send request
 			topic:     topic,
 			consumer:  consumer,
-			responseC: make(chan error),
+			responseC: responseC,
 		}
 
-		if i.closed.Load() {
-			// intracom is closed and unuseable, cant unsubscribe this late
-			return fmt.Errorf("cannot unsubscribe from topic '%s' because intracom has already been closed", topic)
-		}
-
-		i.requestC <- request      // send request
-		err := <-request.responseC // wait for response
-		close(request.responseC)
+		err := <-responseC // wait for response, contains error or nil
+		close(responseC)
 		return err
 
 	}
@@ -130,22 +125,16 @@ func (i *Intracom[T]) unregister(topic string) func() bool {
 			return false
 		}
 
-		if i.closed.Load() {
-			// intracom is closed, so we cant unregister anymore topics.
-			return false
-		}
-
-		request := unregisterRequest{
+		responseC := make(chan bool)
+		i.requestC <- unregisterRequest{ // send request to unregister topic
 			topic:     topic,
-			responseC: make(chan bool),
+			responseC: responseC,
 		}
 
-		i.requestC <- request          // send request to unregister topic
-		success := <-request.responseC // wait for response
+		success := <-responseC // wait for response
 
-		close(request.responseC)
+		close(responseC)
 		return success
-
 	}
 
 }
@@ -164,6 +153,10 @@ func (i *Intracom[T]) broker() {
 	defer close(doneC)
 
 	ctxDone := i.ctx.Done()
+
+	requestC := i.requestC
+
+	var noopC chan any // noop request channel, used when broker is shutting down
 
 	for {
 		select {
@@ -214,14 +207,44 @@ func (i *Intracom[T]) broker() {
 				delete(channels, topic)
 			}
 
-			for topic, publishC := range publishers {
-				close(publishC)
+			for topic := range publishers {
+				// close(publishC)
 				delete(publishers, topic)
 			}
-			// DO NOT nil out the caches, broker handles requests until Close is called.
+
+			noopC = i.requestC // swap request channel to noopC
+			requestC = nil     // prevent requestC case from being selected
+
+			// DO NOT nil out the caches, broker still handles requests until Close is called.
+			broadcasters = nil
+			publishers = nil
+			channels = nil
 			ctxDone = nil // prevent signal from being received again
 
-		case request := <-i.requestC:
+		case request := <-noopC:
+			// NOTE: broker is shutting down, we are just replying to all requests with nil/false
+			switch r := request.(type) {
+			case closeRequest:
+				broadcasters = nil
+				publishers = nil
+				channels = nil
+				ctxDone = nil
+				r.responseC <- struct{}{} // ignore, reply to sender
+			case unregisterRequest:
+				r.responseC <- false // ignore, reply to sender
+			case registerRequest[T]:
+				r.responseC <- nil // ignore, reply to sender
+			case lookupRequest[T]:
+				r.responseC <- lookupResponse[T]{ch: nil, found: false} // ignore, reply to sender
+			case subscribeRequest[T]:
+				r.responseC <- subscribeResponse[T]{ch: nil, success: false} // ignore, reply to sender
+			case unsubscribeRequest[T]:
+				r.responseC <- fmt.Errorf("cannot unsubscribe topic '%s' because intracom is shutting down due to context cancel", r.topic)
+			default:
+				// fmt.Println("error: intracom noop processing unknown requests", r)
+			}
+
+		case request := <-requestC: // process requests as normal
 			switch r := request.(type) {
 			case closeRequest:
 				// interrupt all broadcasters and wait for them to finish
@@ -249,24 +272,26 @@ func (i *Intracom[T]) broker() {
 					delete(publishers, topic)
 				}
 
+				noopC = i.requestC // swap request channel to noopC
+				requestC = nil     // prevent requestC case from being selected
+
 				channels = nil            // nil for gc
 				publishers = nil          // prevent publishers from publishing anymore
 				r.responseC <- struct{}{} // reply to sender
-				return
+				// NOTE: brokerDoneC will be signaled next to clean up the rest of the caches.
 
 			case unregisterRequest:
-				broadcastC, exists := broadcasters[r.topic]
+				broadcaster, exists := broadcasters[r.topic]
 				if !exists {
 					// couldn't find topic, so it must not exist.
 					r.responseC <- false // reply to sender
 					continue
 				}
 
-				// interrupt specific broadcaster for unregister request
+				// interrupt broadcaster for this topic
 				// since we are unregistering an entire topic, we can send a close request
-				for broadcastC, doneC := range broadcastC {
+				for broadcastC, doneC := range broadcaster {
 					// interrupt broadcaster and wait for it to finish
-					// bRequest := unregisterRequest{topic: r.topic, responseC: make(chan bool)}
 					bRequest := closeRequest{responseC: make(chan struct{})}
 					broadcastC <- bRequest // send close request to broadcaster
 					<-bRequest.responseC   // wait for response from broadcaster
@@ -275,12 +300,13 @@ func (i *Intracom[T]) broker() {
 					close(doneC)           // close done channel
 				}
 
+				// retrieve publisher channel, close it if exists.
 				publishC, exists := publishers[r.topic]
 				if exists {
 					close(publishC)
 				}
 
-				// cleanup local cache
+				// cleanup topic from local cache
 				delete(channels, r.topic)     // remove subscriber lookup from local cache
 				delete(publishers, r.topic)   // remove publisher from local cache
 				delete(broadcasters, r.topic) // remove broadcaster from local cache
@@ -406,7 +432,7 @@ func (i *Intracom[T]) broker() {
 				r.responseC <- response                                    // reply to sender
 
 			default:
-				fmt.Println("error: intracom processing unknown requests", r)
+				// fmt.Println("error: intracom processing unknown requests", r)
 			}
 		}
 	}
@@ -464,7 +490,7 @@ func (i *Intracom[T]) broadcaster(broadcastC <-chan any, publishC <-chan T, done
 					r.responseC <- subscribeResponse[T]{ch: ch, success: false} // reply to sender
 				}
 			default:
-				fmt.Println("error: broadcaster processing unknown requests", r)
+				// fmt.Println("error: broadcaster processing unknown requests", r)
 			}
 
 		// NOTE: Anytime select chooses ctx.Done or broadcastC, it interrupts the publishing.
