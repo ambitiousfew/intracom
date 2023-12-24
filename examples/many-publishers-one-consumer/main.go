@@ -1,18 +1,27 @@
 package main
 
 import (
-	"context"
 	"fmt"
+	"log"
+	"os"
 	"sync"
-	"time"
 
 	"github.com/ambitiousfew/intracom"
+	"golang.org/x/exp/slog"
 )
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	ic := intracom.New[string](ctx)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	ic := intracom.New[string]()
+	ic.SetLogger(logger)
+
+	err := ic.Start()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	topic := "metric-events"
 
@@ -55,11 +64,12 @@ func main() {
 		defer unsubscribe()
 
 		for msg := range consumer {
-			fmt.Println(msg)
+			logger.Info(msg)
 		}
 	}()
 
 	// wait for all routines to finish
 	wg.Wait()
-	fmt.Println("done")
+	logger.Info("done")
+
 }

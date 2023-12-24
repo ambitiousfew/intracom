@@ -1,12 +1,14 @@
 package main
 
 import (
-	"context"
 	"fmt"
+	"log"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/ambitiousfew/intracom"
+	"golang.org/x/exp/slog"
 )
 
 func startPublisher(publishC chan<- string) {
@@ -14,16 +16,22 @@ func startPublisher(publishC chan<- string) {
 	// publish a message 10 times.
 	for i := 0; i < 10; i++ {
 		publishC <- fmt.Sprintf("message %d", i)
+		time.Sleep(1 * time.Second)
 	}
 }
 
 func main() {
-	// a parent context that can be cancelled to end all underlying channels inside Intracom
-	// cleanup performed, Intracom instance is no longer usable after cancel
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
 
-	ic := intracom.New[string](ctx)
+	ic := intracom.New[string]()
+	ic.SetLogger(logger)
+
+	err := ic.Start()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	topic := "events"
 

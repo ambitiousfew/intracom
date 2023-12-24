@@ -1,20 +1,28 @@
 package intracom
 
 import (
-	"context"
+	"os"
 	"reflect"
 	"runtime"
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/exp/slog"
 )
 
-func TestSubscribe(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+var debugLogger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	Level: slog.LevelDebug,
+}))
 
-	ic := New[bool](ctx)
-	// defer ic.Close()
+func TestSubscribe(t *testing.T) {
+	ic := New[bool]()
+
+	err := ic.Start()
+	if err != nil {
+		t.Errorf("intracom start error should be nilt: want nil, got %v", err)
+	}
+	defer ic.Close()
 
 	topic := "test-topic"
 	group := "test-subscriber"
@@ -38,10 +46,14 @@ func TestSubscribe(t *testing.T) {
 }
 
 func TestUnsubscribe(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ic := New[bool]()
 
-	ic := New[bool](ctx)
+	err := ic.Start()
+	if err != nil {
+		t.Errorf("intracom start error should be nilt: want nil, got %v", err)
+	}
+
+	defer ic.Close()
 
 	topic := "test-topic"
 	group := "test-subscriber"
@@ -61,17 +73,21 @@ func TestUnsubscribe(t *testing.T) {
 		t.Errorf("subscriber does not exist: want %v, got %v", want, got)
 	}
 
-	err := unsubscribe()
+	err = unsubscribe()
 	if err != nil {
 		t.Errorf("want nil, got %s", err)
 	}
 }
 
 func TestMultipleUnSubscribes(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ic := New[bool]()
 
-	ic := New[bool](ctx)
+	err := ic.Start()
+	if err != nil {
+		t.Errorf("intracom start error should be nilt: want nil, got %v", err)
+	}
+
+	defer ic.Close()
 
 	topic := "test-topic"
 	group := "test-subscriber"
@@ -85,7 +101,7 @@ func TestMultipleUnSubscribes(t *testing.T) {
 
 	_, unsubscribe := ic.Subscribe(conf)
 
-	err := unsubscribe() // nil if succeeds
+	err = unsubscribe() // nil if succeeds
 	if err != nil {
 		t.Errorf("want nil, got %s", err)
 	}
@@ -97,11 +113,15 @@ func TestMultipleUnSubscribes(t *testing.T) {
 	}
 }
 
-func TestLateSubscriberDuringContextCancel(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+func TestLateSubscriberDuringSignalCancel(t *testing.T) {
+	ic := New[bool]()
 
-	ic := New[bool](ctx)
+	err := ic.Start()
+	if err != nil {
+		t.Errorf("intracom start error should be nilt: want nil, got %v", err)
+	}
+
+	defer ic.Close()
 
 	topic := "test-topic"
 	group1 := "test-subscriber1"
@@ -124,15 +144,17 @@ func TestLateSubscriberDuringContextCancel(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(3)
 
-	doneC := make(chan struct{}, 1)
+	doneC := make(chan struct{})
 
 	publishC1, unregister := ic.Register(topic)
 
 	go func() {
 		defer wg.Done()
+		timer := time.NewTimer(2 * time.Second)
+		defer timer.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-timer.C:
 				unregister()
 				close(doneC)
 				return
@@ -161,7 +183,6 @@ func TestLateSubscriberDuringContextCancel(t *testing.T) {
 		defer wg.Done()
 		time.Sleep(3 * time.Second)
 		ch2, _ := ic.Subscribe(conf2)
-		// defer unsubscribe2()
 
 		var isDone bool
 		for !isDone {
@@ -176,27 +197,30 @@ func TestLateSubscriberDuringContextCancel(t *testing.T) {
 	wg.Wait()
 
 	want := false
-
 	// consumer one should have been removed by unregister process
 	_, got1 := ic.get(topic, group1)
 	if want != got1 {
-		t.Errorf("subscriber does not exist: want %v, got %v", want, got1)
+		t.Errorf("subscriber exists: want %v, got %v", want, got1)
 	}
 
-	// consumer two will not exist because late subscriber after context cancel
-	// will be ignored by the noop channel.
+	want = true
+	// late subscriber after unregister should be added again
 	_, got2 := ic.get(topic, group2)
 	if want != got2 {
-		t.Errorf("subscriber does not exist: want %v, got %v", want, got2)
+		t.Errorf("subscriber exists: want %v, got %v", want, got2)
 	}
 
 }
 
 func TestIntracomCloseWithoutUnsubscribing(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ic := New[bool]()
 
-	ic := New[bool](ctx)
+	err := ic.Start()
+	if err != nil {
+		t.Errorf("intracom start error should be nilt: want nil, got %v", err)
+	}
+
+	defer ic.Close()
 
 	topic := "test-topic"
 	group := "test-subscriber"
@@ -230,10 +254,7 @@ func TestIntracomCloseWithoutUnsubscribing(t *testing.T) {
 
 // Testing typed instance creations
 func TestNewBoolTyped(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	ic := New[bool](ctx)
+	ic := New[bool]()
 
 	want := reflect.TypeOf(new(Intracom[bool])).String()
 	got := reflect.TypeOf(ic).String()
@@ -245,9 +266,8 @@ func TestNewBoolTyped(t *testing.T) {
 }
 
 func TestNewStringTyped(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	ic := New[string](ctx)
+
+	ic := New[string]()
 
 	want := reflect.TypeOf(new(Intracom[string])).String()
 	got := reflect.TypeOf(ic).String()
@@ -259,9 +279,7 @@ func TestNewStringTyped(t *testing.T) {
 }
 
 func TestNewIntTyped(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	ic := New[int](ctx)
+	ic := New[int]()
 
 	want := reflect.TypeOf(new(Intracom[int])).String()
 	got := reflect.TypeOf(ic).String()
@@ -273,10 +291,8 @@ func TestNewIntTyped(t *testing.T) {
 }
 
 func TestNewByteTyped(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
-	ic := New[[]byte](ctx)
+	ic := New[[]byte]()
 
 	want := reflect.TypeOf(new(Intracom[[]byte])).String()
 	got := reflect.TypeOf(ic).String()
@@ -287,33 +303,33 @@ func TestNewByteTyped(t *testing.T) {
 
 }
 
-func countMessages[T any](ctx context.Context, num int, sub <-chan T, subCh chan int) {
+func countMessages[T any](num int, sub <-chan T, subCh chan int) {
 	var total int
 	for range sub {
-		select {
-		case <-ctx.Done():
-			subCh <- total
-			return
-		default:
-			total++
-		}
+		total++
 	}
 	subCh <- total
 }
 
 func BenchmarkIntracom(b *testing.B) {
 	runtime.GOMAXPROCS(1) // force single core
-	ctx, cancel := context.WithCancel(context.Background())
 
-	defer cancel()
+	ic := New[string]()
+	err := ic.Start()
 
-	ic := New[string](ctx)
+	if err != nil {
+		b.Errorf("intracom start error should be nilt: want nil, got %v", err)
+	}
+
+	defer ic.Close()
 
 	topic := "channel1"
 
 	totalSub1 := make(chan int, 1)
 	totalSub2 := make(chan int, 1)
 	totalSub3 := make(chan int, 1)
+
+	stopC := make(chan struct{})
 
 	var wg sync.WaitGroup
 	wg.Add(4)
@@ -329,7 +345,7 @@ func BenchmarkIntracom(b *testing.B) {
 
 		defer unsubscribe()
 
-		countMessages[string](ctx, b.N, sub1, totalSub1)
+		countMessages[string](b.N, sub1, totalSub1)
 		// fmt.Println("sub1 done")
 	}()
 
@@ -343,7 +359,7 @@ func BenchmarkIntracom(b *testing.B) {
 		})
 		defer unsubscribe()
 
-		countMessages[string](ctx, b.N, sub2, totalSub2)
+		countMessages[string](b.N, sub2, totalSub2)
 		// fmt.Println("sub2 done")
 	}()
 
@@ -358,25 +374,26 @@ func BenchmarkIntracom(b *testing.B) {
 		})
 		defer unsubscribe()
 
-		countMessages[string](ctx, b.N, sub3, totalSub3)
+		countMessages[string](b.N, sub3, totalSub3)
 		// fmt.Println("sub3 done")
 	}()
 
 	// NOTE: this sleep is necessary to ensure that the subscribers receive all their messages.
 	// without a publisher sleep, subscribers may not be subscribed early enough and would miss messages.
 	time.Sleep(100 * time.Millisecond)
+	b.ResetTimer() // reset benchmark timer once we launch the publisher
 
 	go func() {
 		defer wg.Done()
 
 		publishCh, unregister := ic.Register(topic)
 		defer unregister() // should be called only after done publishing otherwise it will panic
+		defer close(stopC)
+
 		for i := 0; i < b.N; i++ {
 			publishCh <- "test message"
 		}
 	}()
-
-	b.ResetTimer() // reset benchmark timer once we launch the publisher
 
 	wg.Wait()
 

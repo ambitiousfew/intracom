@@ -26,7 +26,7 @@ type subscribeRequest[T any] struct {
 // intracomSubscribeResponse represents the response to a subscribe request.
 type subscribeResponse[T any] struct {
 	ch      chan T
-	success bool
+	created bool
 }
 
 // intracomUnsubscribeRequest represents a request to unsubscribe from a topic.
