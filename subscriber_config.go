@@ -1,13 +1,15 @@
 package intracom
 
+import "time"
+
 type BufferPolicy int
 
 const (
 	DropNone BufferPolicy = iota
 	DropOldest
-	DropOldestWithTimeout
+	DropOldestAfterTimeout
 	DropNewest
-	DropNewestTimeout
+	DropNewestAfterTimeout
 )
 
 type SubscriberConfig struct {
@@ -15,4 +17,5 @@ type SubscriberConfig struct {
 	ConsumerGroup string
 	BufferSize    int
 	BufferPolicy  BufferPolicy
+	DropTimeout   time.Duration
 }

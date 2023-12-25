@@ -306,7 +306,6 @@ func (i *Intracom[T]) broker() {
 					continue
 				}
 
-				i.log.Debug("*** intracom request stopping broadcaster", "topic", r.topic)
 				// interrupt broadcaster for this topic
 				// since we are unregistering an entire topic, we can send a close request
 				for broadcastC, doneC := range broadcaster {
@@ -318,14 +317,11 @@ func (i *Intracom[T]) broker() {
 					<-doneC                // wait for broadcaster to signal complete
 					close(doneC)           // close done channel
 				}
-				i.log.Debug("*** intracom request stopped broadcaster", "topic", r.topic)
 
 				// retrieve publisher channel, close it if exists.
 				publishC, exists := publishers[r.topic]
 				if exists {
-					i.log.Debug("*** intracom request broker closing publisher channel", "topic", r.topic)
 					close(publishC)
-					i.log.Debug("*** intracom request broker closed publisher channel", "topic", r.topic)
 				}
 
 				// cleanup topic from local cache
@@ -468,9 +464,6 @@ func (i *Intracom[T]) broker() {
 				channels[r.conf.Topic][r.conf.ConsumerGroup] = response.ch // update local cache
 				r.responseC <- response                                    // reply to sender
 				i.log.Debug("intracom <- request broker", "action", "subscribe", "topic", r.conf.Topic, "consumer", r.conf.ConsumerGroup, "created", true)
-
-				// default:
-				// fmt.Println("error: intracom processing unknown requests", r)
 			}
 		}
 	}
@@ -480,10 +473,12 @@ func (i *Intracom[T]) broker() {
 // it will also handle broadcasting messages to all subscribers.
 func (i *Intracom[T]) broadcaster(broadcastC <-chan any, publishC <-chan T, doneC chan<- struct{}) {
 	i.log.Debug("an intracom broadcaster has started and is now accepting requests")
-	subscribers := make(map[string]chan T)
+	subscribers := make(map[string]*subscriber[T])
 
-	// NOTE: this nil publish channel is conditionally hot-swapped for an active channel
-	var publish <-chan T // reading a nil channel causes blocking until its not nil
+	var lastMsg T
+	var receivedOnce bool
+
+	publish := publishC
 
 	for {
 		select {
@@ -494,8 +489,8 @@ func (i *Intracom[T]) broadcaster(broadcastC <-chan any, publishC <-chan T, done
 			switch r := request.(type) {
 			case closeRequest:
 				// close all subscriber channels.
-				for _, ch := range subscribers {
-					close(ch)
+				for _, subscriber := range subscribers {
+					subscriber.close()
 				}
 				subscribers = nil         // nil for gc
 				publish = nil             // ensure we dont receive published messages anymore
@@ -508,37 +503,34 @@ func (i *Intracom[T]) broadcaster(broadcastC <-chan any, publishC <-chan T, done
 			case unsubscribeRequest[T]:
 				// attempt to remove from subscriber map so the publisher is able to
 				//  detach before requester cancels the consumer channel.
-				ch, found := subscribers[r.consumer]
+				subscriber, found := subscribers[r.consumer]
 				if !found {
 					err := fmt.Errorf("cannot unsubscribe consumer '%s' has not been subscribed", r.consumer)
 					r.responseC <- err
 					continue
 				}
 
-				close(ch)                       // close consumer channel
+				subscriber.close()              // close subscriber channel
 				delete(subscribers, r.consumer) // remove subscriber from local cache
-
-				if len(subscribers) == 0 {
-					publish = nil // no subscribers left, don't receive published messages anymore
-				}
 				r.responseC <- nil
 
 			case subscribeRequest[T]:
-				if ch, exists := subscribers[r.conf.ConsumerGroup]; !exists {
+				if subscriber, exists := subscribers[r.conf.ConsumerGroup]; !exists {
 					// consumer group doesnt exist, create new one.
-					subscriberC := make(chan T, r.conf.BufferSize)
-					subscribers[r.conf.ConsumerGroup] = subscriberC
-					if len(subscribers) == 1 {
-						// first subscriber, hot-swap nil publish channel for active one
-						publish = publishC
+					// subscriberC := make(chan T, r.conf.BufferSize)
+					s := newSubscriber[T](r.conf)
+					subscribers[r.conf.ConsumerGroup] = s
+					r.responseC <- subscribeResponse[T]{ch: s.ch, created: true} // reply to sender
+
+					// if we have received at least one published message, we have a lastMsg to send to new subscriber
+					if receivedOnce {
+						s.send(lastMsg) // send last message published to this topic to new subscriber
 					}
-					r.responseC <- subscribeResponse[T]{ch: subscriberC, created: true} // reply to sender
 				} else {
 					// consumer group exists, pass back existing channel reference.
-					r.responseC <- subscribeResponse[T]{ch: ch, created: false} // reply to sender
+					r.responseC <- subscribeResponse[T]{ch: subscriber.ch, created: false} // reply to sender
 				}
-				// default:
-				// i.log.Debug("error: broadcaster processing unknown requests", r)
+
 			}
 
 		// NOTE: Anytime select chooses broadcastC, it interrupts the publishing.
@@ -546,9 +538,15 @@ func (i *Intracom[T]) broadcaster(broadcastC <-chan any, publishC <-chan T, done
 		// the creation or deletion of a subscriber because we need to update the subscribers map
 		// between publishing.
 		case msg := <-publish:
-			for _, sub := range subscribers {
-				sub <- msg // send message to all subscribers
+			if !receivedOnce {
+				receivedOnce = true
 			}
+
+			for _, subscriber := range subscribers {
+				subscriber.send(msg)
+				// sub <- msg // send message to all subscribers
+			}
+			lastMsg = msg // store last message broadcasted
 		}
 
 	}
