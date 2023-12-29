@@ -1,5 +1,6 @@
 package intracom
 
+// closeRequest represents a request to close the requests broker.
 type closeRequest struct {
 	responseC chan struct{}
 }
@@ -45,5 +46,5 @@ type registerRequest[T any] struct {
 // intracomUnregisterRequest represents a request to unregister a topic.
 type unregisterRequest struct {
 	topic     string
-	responseC chan bool
+	responseC chan error
 }

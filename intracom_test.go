@@ -3,7 +3,6 @@ package intracom
 import (
 	"os"
 	"reflect"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -312,11 +311,9 @@ func countMessages[T any](num int, sub <-chan T, subCh chan int) {
 }
 
 func BenchmarkIntracom(b *testing.B) {
-	runtime.GOMAXPROCS(1) // force single core
-
 	ic := New[string]()
-	err := ic.Start()
 
+	err := ic.Start()
 	if err != nil {
 		b.Errorf("intracom start error should be nilt: want nil, got %v", err)
 	}
@@ -329,8 +326,6 @@ func BenchmarkIntracom(b *testing.B) {
 	totalSub2 := make(chan int, 1)
 	totalSub3 := make(chan int, 1)
 
-	stopC := make(chan struct{})
-
 	var wg sync.WaitGroup
 	wg.Add(4)
 
@@ -339,7 +334,7 @@ func BenchmarkIntracom(b *testing.B) {
 		sub1, unsubscribe := ic.Subscribe(&SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub1",
-			BufferSize:    1,
+			BufferSize:    10,
 			BufferPolicy:  DropNone,
 		})
 
@@ -354,7 +349,7 @@ func BenchmarkIntracom(b *testing.B) {
 		sub2, unsubscribe := ic.Subscribe(&SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub2",
-			BufferSize:    1,
+			BufferSize:    10,
 			BufferPolicy:  DropNone,
 		})
 		defer unsubscribe()
@@ -369,7 +364,7 @@ func BenchmarkIntracom(b *testing.B) {
 		sub3, unsubscribe := ic.Subscribe(&SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub3",
-			BufferSize:    1,
+			BufferSize:    10,
 			BufferPolicy:  DropNone,
 		})
 		defer unsubscribe()
@@ -380,7 +375,7 @@ func BenchmarkIntracom(b *testing.B) {
 
 	// NOTE: this sleep is necessary to ensure that the subscribers receive all their messages.
 	// without a publisher sleep, subscribers may not be subscribed early enough and would miss messages.
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(25 * time.Millisecond)
 	b.ResetTimer() // reset benchmark timer once we launch the publisher
 
 	go func() {
@@ -388,7 +383,6 @@ func BenchmarkIntracom(b *testing.B) {
 
 		publishCh, unregister := ic.Register(topic)
 		defer unregister() // should be called only after done publishing otherwise it will panic
-		defer close(stopC)
 
 		for i := 0; i < b.N; i++ {
 			publishCh <- "test message"

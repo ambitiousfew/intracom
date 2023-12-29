@@ -1,32 +1,29 @@
+// Example of one publisher and many consumers.
+//
+// This example demonstrates two concepts at the same time: Fan-Out and Broadcasting
+//
+// - Fan Out - 2 goroutines are subscribed to the same topic (events) using the same consumer name (consumer1).
+//  this makes them part of the same consumer group, effectively creating a worker pool against the channel.
+//  this allows you to "fan-out" the messages to multiple workers without repeating the same message to them all.
+//
+// - Broadcasting - 1 goroutine is subscribed to the same topic (events) with a different consumer name (consumer2).
+//  this makes it part of a different consumer group of the same topic, because of this it will receive the same
+//  messages as the other goroutines, but it will not share the workload with them.
+//  this allows you to send the same message to a separate consumer to process differently than the worker pool.
+
 package main
 
 import (
 	"fmt"
 	"log"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/ambitiousfew/intracom"
-	"golang.org/x/exp/slog"
 )
 
-func startPublisher(publishC chan<- string) {
-	// time.Sleep(2 * time.Second)
-	// publish a message 10 times.
-	for i := 0; i < 10; i++ {
-		publishC <- fmt.Sprintf("message %d", i)
-		time.Sleep(1 * time.Second)
-	}
-}
-
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
-
 	ic := intracom.New[string]()
-	ic.SetLogger(logger)
 
 	err := ic.Start()
 	if err != nil {
@@ -35,57 +32,80 @@ func main() {
 
 	topic := "events"
 
-	// use .Register to register a topic you wish to publish to.
-	// you will receive a send-only channel for your producers
-	// and a bound-callable function that when called will unregister this topic.
+	// register topic, receive a publishing channel and unregister function bound to the topic registered.
 	publishCh, unregister := ic.Register(topic)
 
-	// For this example we are launching 3 routines
-	// 2 routines that will subscribe to the same topic with different consumer names.
-	// 1 routine that will publish to the same topic.
-	// Publishes will be "broadcasted" to all subscribers of the same topic.
-	// Late subscribers will only receive messages from the time at which they connect.
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 
-	go func() { // consumer1 subscribing using intracom instance.
+	go func() {
 		defer wg.Done()
-		// consumer 1
+		// subscribe to the topic with consumer1 name - worker 1
 		ch, _ := ic.Subscribe(&intracom.SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "consumer1",
-			BufferSize:    10,
+			BufferSize:    1,
 			BufferPolicy:  intracom.DropNone,
 		})
 
+		// consume from a receive-only channel that publisher broadcasts into.
 		for message := range ch {
-			fmt.Println("consumer1 message received: ", message)
+			log.Println("consumer1 worker1 - message received: ", message)
 		}
 	}()
 
-	go func() { // consumer2 subscribing using intracom instance.
+	go func() {
+		// subscribe to the same topic with consumer1 - worker 2
 		defer wg.Done()
-		// consumer 2
+
+		ch, _ := ic.Subscribe(&intracom.SubscriberConfig{
+			Topic:         topic,
+			ConsumerGroup: "consumer1",
+			BufferSize:    1,
+			BufferPolicy:  intracom.DropNone,
+		})
+
+		// because this routine subscribed using the same consumer group (consumer1)
+		// same as the previous routine, both routines share the workload.
+		//
+		// This is useful if you have a fast publisher or many publishers and you want to consume faster
+		for message := range ch {
+			log.Println("consumer1 worker2 - message received: ", message)
+		}
+	}()
+
+	go func() {
+		// subscribe to the same topic with consumer2
+		defer wg.Done()
+
 		ch, _ := ic.Subscribe(&intracom.SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "consumer2",
-			BufferSize:    10,
+			BufferSize:    1,
 			BufferPolicy:  intracom.DropNone,
 		})
 
+		// consume from a receive-only channel that publisher broadcasts into.
+		// beacause this consumer has a different consumer group, it will receive the same messages as consumer1.
 		for message := range ch {
-			fmt.Println("consumer2 message received: ", message)
+			log.Println("consumer2 worker  - message received: ", message)
 		}
 	}()
 
-	go func() { // publisher of 10 messages, 0 through 9
+	go func() {
+		// start a routine that will publish to the topic.
 		defer wg.Done()
-		defer unregister() // nothing more will be produced, unregister topic.
-		startPublisher(publishCh)
+		defer unregister() // unregister the topic when done (closes all subscribers to the topic)
+
+		// publish 10 messages to the topic.
+		for i := 0; i < 10; i++ {
+			publishCh <- fmt.Sprintf("message %d", i)
+			time.Sleep(250 * time.Millisecond)
+		}
 	}()
 
-	fmt.Println("waiting for metric events consumer")
+	log.Println("waiting for metric events consumer")
 	// consume from a receive-only channel that publisher pushes into.
 	wg.Wait()
-	fmt.Println("done.")
+	log.Println("done.")
 }
