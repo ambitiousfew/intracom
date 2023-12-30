@@ -254,7 +254,7 @@ func (i *Intracom[T]) unregister(topic string) func() error {
 // Only NEW subscribe/unsubscribe/register/unregister requests will interrupt the broadcaster for a given topic.
 // Otherwise the request broker will use its own local cache to process requests.
 func (i *Intracom[T]) broker() {
-	i.log.Debug("intracom requests broker is starting")
+	i.log.Debug("intracom requests broker starting, accepting requests")
 	// broker stores its own local cache for lookups to avoid interrupting the broadcaster.
 	// yes, duplicating state but its easy enough to keep them in-sync for the benefits.
 
@@ -564,7 +564,7 @@ func (i *Intracom[T]) broker() {
 // - publishC: the channel used to publish messages to the broadcaster
 // - doneC: the channel used to signal when the broadcaster is done for graceful shutdown
 func (i *Intracom[T]) broadcaster(broadcastC <-chan any, publishC <-chan T, doneC chan<- struct{}) {
-	i.log.Debug("an intracom broadcaster has started and is now accepting requests")
+	i.log.Debug("intracom broadcaster started and accepting requests")
 	subscribers := make(map[string]*subscriber[T])
 
 	var lastMsg T
@@ -590,7 +590,7 @@ func (i *Intracom[T]) broadcaster(broadcastC <-chan any, publishC <-chan T, done
 				broadcastC = nil          // ensure we dont receive any more requests
 				r.responseC <- struct{}{} // reply to sender
 				doneC <- struct{}{}       // signal to broker that we are done
-				i.log.Debug("an intracom broadcaster has closed and is no longer accepting requests")
+				i.log.Debug("intracom broadcaster closed, no longer accepting requests")
 				return
 
 			case unsubscribeRequest[T]:
