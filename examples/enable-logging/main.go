@@ -23,7 +23,7 @@ func main() {
 
 	logger := slog.New(myHandler)
 
-	ic := intracom.New[string]()
+	ic := intracom.New[string]("enable-logging-example")
 	defer ic.Close()
 
 	ic.SetLogHandler(myHandler) // must happen before .Start()
@@ -65,7 +65,7 @@ func main() {
 
 		// consume from a receive-only channel that publisher broadcasts into.
 		for message := range ch {
-			logger.Info("consumer1 worker1 - message received: ", message)
+			logger.Info("consumer1 worker1", "received", message)
 		}
 	}()
 

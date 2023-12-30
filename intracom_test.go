@@ -15,7 +15,7 @@ var debugLogger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 }))
 
 func TestSubscribe(t *testing.T) {
-	ic := New[bool]()
+	ic := New[bool]("test-intracom")
 
 	err := ic.Start()
 	if err != nil {
@@ -45,7 +45,7 @@ func TestSubscribe(t *testing.T) {
 }
 
 func TestUnsubscribe(t *testing.T) {
-	ic := New[bool]()
+	ic := New[bool]("test-intracom")
 
 	err := ic.Start()
 	if err != nil {
@@ -79,7 +79,7 @@ func TestUnsubscribe(t *testing.T) {
 }
 
 func TestMultipleUnSubscribes(t *testing.T) {
-	ic := New[bool]()
+	ic := New[bool]("test-intracom")
 
 	err := ic.Start()
 	if err != nil {
@@ -113,7 +113,7 @@ func TestMultipleUnSubscribes(t *testing.T) {
 }
 
 func TestLateSubscriberDuringSignalCancel(t *testing.T) {
-	ic := New[bool]()
+	ic := New[bool]("test-intracom")
 
 	err := ic.Start()
 	if err != nil {
@@ -212,7 +212,7 @@ func TestLateSubscriberDuringSignalCancel(t *testing.T) {
 }
 
 func TestIntracomCloseWithoutUnsubscribing(t *testing.T) {
-	ic := New[bool]()
+	ic := New[bool]("test-intracom")
 
 	err := ic.Start()
 	if err != nil {
@@ -253,7 +253,7 @@ func TestIntracomCloseWithoutUnsubscribing(t *testing.T) {
 
 // Testing typed instance creations
 func TestNewBoolTyped(t *testing.T) {
-	ic := New[bool]()
+	ic := New[bool]("test-intracom")
 
 	want := reflect.TypeOf(new(Intracom[bool])).String()
 	got := reflect.TypeOf(ic).String()
@@ -266,7 +266,7 @@ func TestNewBoolTyped(t *testing.T) {
 
 func TestNewStringTyped(t *testing.T) {
 
-	ic := New[string]()
+	ic := New[string]("test-intracom")
 
 	want := reflect.TypeOf(new(Intracom[string])).String()
 	got := reflect.TypeOf(ic).String()
@@ -278,7 +278,7 @@ func TestNewStringTyped(t *testing.T) {
 }
 
 func TestNewIntTyped(t *testing.T) {
-	ic := New[int]()
+	ic := New[int]("test-intracom")
 
 	want := reflect.TypeOf(new(Intracom[int])).String()
 	got := reflect.TypeOf(ic).String()
@@ -291,7 +291,7 @@ func TestNewIntTyped(t *testing.T) {
 
 func TestNewByteTyped(t *testing.T) {
 
-	ic := New[[]byte]()
+	ic := New[[]byte]("test-intracom")
 
 	want := reflect.TypeOf(new(Intracom[[]byte])).String()
 	got := reflect.TypeOf(ic).String()
@@ -311,7 +311,7 @@ func countMessages[T any](num int, sub <-chan T, subCh chan int) {
 }
 
 func BenchmarkIntracom(b *testing.B) {
-	ic := New[string]()
+	ic := New[string]("test-intracom")
 
 	err := ic.Start()
 	if err != nil {

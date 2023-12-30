@@ -23,7 +23,7 @@ import (
 )
 
 func main() {
-	ic := intracom.New[string]()
+	ic := intracom.New[string]("one-to-many-example")
 
 	err := ic.Start()
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 
 // Intracom is an in-memory pub/sub wrapper to enable communication between routines.
 type Intracom[T any] struct {
+	name        string
 	requestC    chan any      // channel for requests to the broker
 	brokerDoneC chan struct{} // channel for broker to signal when done
 	log         *slog.Logger  // slog logging instance
@@ -17,10 +18,11 @@ type Intracom[T any] struct {
 }
 
 // New returns a new Intracom instance.
-func New[T any]() *Intracom[T] {
-	log := slog.Default()
+func New[T any](name string) *Intracom[T] {
+	log := slog.Default().With("name", name)
 
 	ic := &Intracom[T]{
+		name:        name,
 		log:         log,
 		requestC:    make(chan any),
 		brokerDoneC: make(chan struct{}),
@@ -62,7 +64,7 @@ func (i *Intracom[T]) SetLogHandler(handler slog.Handler) {
 	}
 
 	// recreate a logger using the new handler
-	i.log = slog.New(handler)
+	i.log = slog.New(handler).With("name", i.name)
 }
 
 // Register will register a topic with the Intracom instance.
