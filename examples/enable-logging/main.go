@@ -17,14 +17,16 @@ import (
 )
 
 func main() {
-	myLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	myHandler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
-	}))
+	})
+
+	logger := slog.New(myHandler)
 
 	ic := intracom.New[string]()
 	defer ic.Close()
 
-	ic.SetLogger(myLogger) // must happen before .Start()
+	ic.SetLogHandler(myHandler) // must happen before .Start()
 
 	err := ic.Start()
 	if err != nil {
@@ -63,12 +65,12 @@ func main() {
 
 		// consume from a receive-only channel that publisher broadcasts into.
 		for message := range ch {
-			myLogger.Info("consumer1 worker1 - message received: ", message)
+			logger.Info("consumer1 worker1 - message received: ", message)
 		}
 	}()
 
-	myLogger.Info("waiting for metric events consumer")
+	logger.Info("waiting for metric events consumer")
 	// consume from a receive-only channel that publisher pushes into.
 	wg.Wait()
-	myLogger.Info("done.")
+	logger.Info("done.")
 }

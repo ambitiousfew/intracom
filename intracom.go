@@ -49,18 +49,20 @@ func (i *Intracom[T]) Start() error {
 	return nil
 }
 
-// SetLogger will set the logger for the Intracom instance.
-// If this function is not called, the slog Default() logger will be used.
+// SetLogHandler will set the logger used by the Intracom instance.
+// If this function is not called, the slog Default() log handler will be used.
 // NOTE: This function must be called before intracom.Start()
 //
 // Parameters:
-// - l: an instance of slog.Logger
-func (i *Intracom[T]) SetLogger(l *slog.Logger) {
+// - handler: a slog.Handler interface to use for logging
+func (i *Intracom[T]) SetLogHandler(handler slog.Handler) {
 	if i.running {
 		// if intracom is already started, return
 		return
 	}
-	i.log = l
+
+	// recreate a logger using the new handler
+	i.log = slog.New(handler)
 }
 
 // Register will register a topic with the Intracom instance.
@@ -110,15 +112,16 @@ func (i *Intracom[T]) Subscribe(conf *SubscriberConfig) (<-chan T, func() error)
 	if conf == nil {
 		// cant allow nil consumer configs, default it if nil.
 		// TODO: log warning
-		conf.Topic = ""
-		conf.ConsumerGroup = ""
-		conf.BufferSize = 1
-		conf.BufferPolicy = DropNone
-	} else {
-		// Buffer size should always be at least 1
-		if conf.BufferSize < 1 {
-			conf.BufferSize = 1
+		conf = &SubscriberConfig{
+			Topic:         "",
+			ConsumerGroup: "",
+			BufferSize:    1,
+			BufferPolicy:  DropNone,
 		}
+	}
+	// Buffer size should always be at least 1
+	if conf.BufferSize < 1 {
+		conf.BufferSize = 1
 	}
 
 	responseC := make(chan subscribeResponse[T])
