@@ -65,16 +65,12 @@ func TestUnsubscribe(t *testing.T) {
 	}
 
 	_, unsubscribe := ic.Subscribe(conf)
+	defer unsubscribe()
 
 	want := true
 	_, got := ic.get(topic, group) // true if exists
 	if want != got {
 		t.Errorf("subscriber does not exist: want %v, got %v", want, got)
-	}
-
-	err = unsubscribe()
-	if err != nil {
-		t.Errorf("want nil, got %s", err)
 	}
 }
 
@@ -99,17 +95,8 @@ func TestMultipleUnSubscribes(t *testing.T) {
 	}
 
 	_, unsubscribe := ic.Subscribe(conf)
-
-	err = unsubscribe() // nil if succeeds
-	if err != nil {
-		t.Errorf("want nil, got %s", err)
-	}
-
-	err = unsubscribe() // error if already unsubscribed
-
-	if err == nil {
-		t.Errorf("want nil, got %s", err)
-	}
+	unsubscribe()
+	unsubscribe()
 }
 
 func TestLateSubscriberDuringSignalCancel(t *testing.T) {

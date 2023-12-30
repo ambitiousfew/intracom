@@ -34,7 +34,7 @@ type subscribeResponse[T any] struct {
 type unsubscribeRequest[T any] struct {
 	topic     string
 	consumer  string
-	responseC chan error
+	responseC chan struct{}
 }
 
 // registerRequest represents a request to register a topic with the requests broker.
@@ -46,5 +46,5 @@ type registerRequest[T any] struct {
 // intracomUnregisterRequest represents a request to unregister a topic.
 type unregisterRequest struct {
 	topic     string
-	responseC chan error
+	responseC chan struct{}
 }

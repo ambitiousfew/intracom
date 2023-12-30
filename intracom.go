@@ -77,7 +77,7 @@ func (i *Intracom[T]) SetLogHandler(handler slog.Handler) {
 // Returns:
 // - publishC: the channel used to publish messages to the topic
 // - unregister: a function bound to this topic that can be used to unregister the topic
-func (i *Intracom[T]) Register(topic string) (chan<- T, func() error) {
+func (i *Intracom[T]) Register(topic string) (chan<- T, func()) {
 	responseC := make(chan chan T)
 
 	i.requestC <- registerRequest[T]{ // send request
@@ -110,7 +110,7 @@ func (i *Intracom[T]) Register(topic string) (chan<- T, func() error) {
 // Returns:
 // - ch: the channel used to receive messages from the topic
 // - unsubscribe: a function bound to this subscription that can be used to unsubscribe the consumer group
-func (i *Intracom[T]) Subscribe(conf *SubscriberConfig) (<-chan T, func() error) {
+func (i *Intracom[T]) Subscribe(conf *SubscriberConfig) (<-chan T, func()) {
 	if conf == nil {
 		// cant allow nil consumer configs, default it if nil.
 		// TODO: log warning
@@ -208,9 +208,9 @@ func (i *Intracom[T]) get(topic, consumer string) (<-chan T, bool) {
 //
 // Returns:
 // - unsubscribe: a function bound to this subscription that can be used to unsubscribe the consumer group
-func (i *Intracom[T]) unsubscribe(topic, consumer string) func() error {
-	return func() error {
-		responseC := make(chan error)
+func (i *Intracom[T]) unsubscribe(topic, consumer string) func() {
+	return func() {
+		responseC := make(chan struct{})
 
 		i.requestC <- unsubscribeRequest[T]{ // send request
 			topic:     topic,
@@ -218,29 +218,24 @@ func (i *Intracom[T]) unsubscribe(topic, consumer string) func() error {
 			responseC: responseC,
 		}
 
-		err := <-responseC // wait for response, contains error or nil
+		<-responseC // wait for response
 		close(responseC)
-
-		return err
-
 	}
 }
 
 // unregister returns a function bound to this topic that can be used to unregister the topic.
 // This function will return false if the topic does not exist.
-func (i *Intracom[T]) unregister(topic string) func() error {
-	return func() error {
-		responseC := make(chan error)
+func (i *Intracom[T]) unregister(topic string) func() {
+	return func() {
+		responseC := make(chan struct{})
 
 		i.requestC <- unregisterRequest{ // send request to unregister topic
 			topic:     topic,
 			responseC: responseC,
 		}
 
-		err := <-responseC // wait for response
+		<-responseC // wait for response
 		close(responseC)
-
-		return err
 	}
 
 }
@@ -311,7 +306,7 @@ func (i *Intracom[T]) broker() {
 
 			case unregisterRequest:
 				i.log.Debug("intracom -> noop request broker", "action", "unregister", "topic", r.topic)
-				r.responseC <- nil // ignore, reply to sender
+				r.responseC <- struct{}{} // ignore, reply to sender
 				i.log.Debug("intracom <- noop request broker", "action", "unregister", "topic", r.topic, "success", false)
 
 			case registerRequest[T]:
@@ -332,7 +327,7 @@ func (i *Intracom[T]) broker() {
 			case unsubscribeRequest[T]:
 				i.log.Debug("intracom -> noop request broker", "action", "unsubscribe", "topic", r.topic, "consumer", r.consumer)
 				err := fmt.Errorf("cannot unsubscribe topic '%s' because intracom is shutting down due to context cancel", r.topic)
-				r.responseC <- err // ignore, reply to sender
+				r.responseC <- struct{}{} // ignore, reply to sender
 				i.log.Debug("intracom <- noop request broker", "action", "unsubscribe", "topic", r.topic, "consumer", r.consumer, "error", err)
 			default:
 				// fmt.Println("error: intracom noop processing unknown requests", r)
@@ -379,7 +374,7 @@ func (i *Intracom[T]) broker() {
 				if !exists {
 					// couldn't find topic, so it must not exist.
 					err := fmt.Errorf("cannot unregister topic '%s' does not exist", r.topic)
-					r.responseC <- err
+					r.responseC <- struct{}{}
 					i.log.Debug("intracom <- request broker", "action", "unregister", "topic", r.topic, "error", err)
 					continue
 				}
@@ -406,7 +401,7 @@ func (i *Intracom[T]) broker() {
 				delete(channels, r.topic)     // remove subscriber lookup from local cache
 				delete(publishers, r.topic)   // remove publisher from local cache
 				delete(broadcasters, r.topic) // remove broadcaster from local cache
-				r.responseC <- nil            // reply to sender
+				r.responseC <- struct{}{}     // reply to sender
 				i.log.Debug("intracom <- request broker", "action", "unregister", "topic", r.topic, "success", true)
 
 			case registerRequest[T]:
@@ -458,7 +453,7 @@ func (i *Intracom[T]) broker() {
 				subscribers, exists := channels[r.topic]
 				if !exists {
 					err := fmt.Errorf("cannot unsubscribe topic '%s' does not exist", r.topic) // reply to sender with false
-					r.responseC <- err
+					r.responseC <- struct{}{}
 					i.log.Debug("intracom <- request broker", "action", "unsubscribe", "topic", r.topic, "consumer", r.consumer, "error", err)
 					continue
 				}
@@ -467,7 +462,7 @@ func (i *Intracom[T]) broker() {
 				_, found := subscribers[r.consumer]
 				if !found {
 					err := fmt.Errorf("cannot unsubscribe consumer '%s' has not been subscribed", r.consumer)
-					r.responseC <- err
+					r.responseC <- struct{}{}
 					i.log.Debug("intracom <- request broker", "action", "unsubscribe", "topic", r.topic, "consumer", r.consumer, "error", err)
 					continue
 				}
@@ -478,15 +473,15 @@ func (i *Intracom[T]) broker() {
 					// interrupt broadcaster for unsubscribe request
 					for broadcastC := range broadcasters {
 						// interrupt broadcaster publish to remove subscriber
-						bRequest := unsubscribeRequest[T]{topic: r.topic, consumer: r.consumer, responseC: make(chan error)}
-						broadcastC <- bRequest     // send unsubscribe request to broadcaster
-						err = <-bRequest.responseC // wait for response from broadcaster
+						bRequest := unsubscribeRequest[T]{topic: r.topic, consumer: r.consumer, responseC: make(chan struct{})}
+						broadcastC <- bRequest // send unsubscribe request to broadcaster
+						<-bRequest.responseC   // wait for response from broadcaster
 						close(bRequest.responseC)
 					}
 				}
 
 				delete(subscribers, r.consumer) // remove subscriber from local cache
-				r.responseC <- err              // reply to sender
+				r.responseC <- struct{}{}       // reply to sender
 				i.log.Debug("intracom <- request broker", "action", "unsubscribe", "topic", r.topic, "consumer", r.consumer, "error", err)
 
 			case subscribeRequest[T]:
@@ -598,14 +593,14 @@ func (i *Intracom[T]) broadcaster(broadcastC <-chan any, publishC <-chan T, done
 				//  detach before requester cancels the consumer channel.
 				subscriber, found := subscribers[r.consumer]
 				if !found {
-					err := fmt.Errorf("cannot unsubscribe consumer '%s' has not been subscribed", r.consumer)
-					r.responseC <- err
+					i.log.Debug(fmt.Sprintf("cannot unsubscribe consumer '%s' has not been subscribed", r.consumer))
+					r.responseC <- struct{}{}
 					continue
 				}
 
 				subscriber.close()              // close subscriber channel
 				delete(subscribers, r.consumer) // remove subscriber from local cache
-				r.responseC <- nil
+				r.responseC <- struct{}{}
 
 			case subscribeRequest[T]:
 				if subscriber, exists := subscribers[r.conf.ConsumerGroup]; !exists {
