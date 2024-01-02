@@ -1,19 +1,112 @@
 package intracom
 
 import (
-	"os"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
-
-	"golang.org/x/exp/slog"
 )
 
-var debugLogger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-	Level: slog.LevelDebug,
-}))
+// TestIntracomStart ensures that the closed bool is set to false when
+// the intracom instance is started signifying that it is ready to be used.
+func TestIntracomStarted(t *testing.T) {
+	ic := New[bool]("test-intracom")
 
+	err := ic.Start()
+	if err != nil {
+		t.Errorf("intracom start error should be nil: want nil, got %v", err)
+	}
+
+	want := false
+	got := ic.closed
+
+	if want != got {
+		t.Errorf("want %v, got %v", want, got)
+	}
+}
+
+// TestIntracomNotStarted ensures that the closed boolean is set to true
+// since the intracom instance has not been started yet.
+func TestIntracomNotStarted(t *testing.T) {
+	ic := New[bool]("test-intracom")
+
+	want := true
+	got := ic.closed
+
+	if want != got {
+		t.Errorf("want %v, got %v", want, got)
+	}
+}
+
+// TestRegister ensures that a topic can be registered and a channel is returned
+// for publishing messages into the topic. The channel returned will be the same
+// channel for the same topic as long as the intracom instance is not closed, it will act as a lookup.
+func TestRegister(t *testing.T) {
+	ic := New[bool]("test-intracom")
+
+	err := ic.Start()
+	if err != nil {
+		t.Errorf("intracom start error should be nilt: want nil, got %v", err)
+	}
+	defer ic.Close()
+
+	topic := "test-topic"
+
+	publishC, _ := ic.Register(topic)
+
+	if publishC == nil {
+		t.Errorf("register returned a nil channel: want non-nil, got %v", publishC)
+	}
+}
+
+// TestMultipleRegisters ensures that multiple registers can take place against
+// the same topic and will effectively return the same channel for the same topic
+// as long as the intracom instance is not closed, it will act as a lookup.
+func TestMultipleRegisters(t *testing.T) {
+	ic := New[bool]("test-intracom")
+
+	err := ic.Start()
+	if err != nil {
+		t.Errorf("intracom start error should be nilt: want nil, got %v", err)
+	}
+	defer ic.Close()
+
+	topic := "test-topic"
+
+	firstRegister, _ := ic.Register(topic)
+	secondRegister, _ := ic.Register(topic)
+
+	if firstRegister != secondRegister {
+		t.Errorf("register is returning different channels on multiple registers: want %v, got %v", firstRegister, secondRegister)
+	}
+}
+
+// TestMultipleUnRegisters ensures that multiple unregisters can take place against
+// against the same topic. The first unregister will remove stop the broadcaster of
+// the topic, the second unregister will be ignored.
+func TestMultipleUnRegisters(t *testing.T) {
+	ic := New[bool]("test-intracom")
+
+	err := ic.Start()
+	if err != nil {
+		t.Errorf("intracom start error should be nilt: want nil, got %v", err)
+	}
+	defer ic.Close()
+
+	topic := "test-topic"
+
+	publishC, unregister := ic.Register(topic)
+
+	if publishC == nil {
+		t.Errorf("register returned a nil channel: want non-nil, got %v", publishC)
+	}
+
+	unregister() // the broadcaster for the topic would be shutdown here.
+	unregister() // should not panic, the request should be ignored since the topic was removed.
+}
+
+// TestSubscribe ensures that a subscriber is able to subscribe to a topic
+// whether that topic already exists or not, the topic will be created if it does not exist.
 func TestSubscribe(t *testing.T) {
 	ic := New[bool]("test-intracom")
 
@@ -33,17 +126,22 @@ func TestSubscribe(t *testing.T) {
 		BufferPolicy:  DropNone,
 	}
 
-	_, unsubscribe := ic.Subscribe(conf)
-	defer unsubscribe()
+	wantC, _ := ic.Subscribe(conf)
 	want := true
 
 	// ensure the topic was initialized.
-	_, got := ic.get(topic, group)
-	if !got {
+	gotC, got := ic.get(topic, group)
+
+	if want != got {
 		t.Errorf("subscriber does not exist: want %v, got %v", want, got)
+	}
+
+	if wantC != gotC {
+		t.Errorf("subscriber channel does not match: want %v, got %v", wantC, gotC)
 	}
 }
 
+// TestUnsubscribe ensures that a subscriber is able to individually remove themselves from a topic.
 func TestUnsubscribe(t *testing.T) {
 	ic := New[bool]("test-intracom")
 
@@ -65,15 +163,24 @@ func TestUnsubscribe(t *testing.T) {
 	}
 
 	_, unsubscribe := ic.Subscribe(conf)
-	defer unsubscribe()
 
 	want := true
-	_, got := ic.get(topic, group) // true if exists
+	_, got := ic.get(topic, group) // ensure it exists
 	if want != got {
 		t.Errorf("subscriber does not exist: want %v, got %v", want, got)
 	}
+
+	unsubscribe() // perform unsubscribe
+
+	want = false
+	_, got = ic.get(topic, group) // ensure it no longer exists
+	if want != got {
+		t.Errorf("subscriber still exists: want %v, got %v", want, got)
+	}
 }
 
+// TestMultipleSubscribers ensures that unsubscribe can be called multiple times
+// against the same topic without error, the request will effectively be ignored.
 func TestMultipleUnSubscribes(t *testing.T) {
 	ic := New[bool]("test-intracom")
 
@@ -97,6 +204,40 @@ func TestMultipleUnSubscribes(t *testing.T) {
 	_, unsubscribe := ic.Subscribe(conf)
 	unsubscribe()
 	unsubscribe()
+}
+
+// TestUnsubscribeAfterClose ensure that a panic: send on a closed channel will happen
+// if a subscriber tries to unsubscribe after intracom instance is closed.
+// Close() should always be called last, when you are done using intracom.
+func TestUnsubscribeAfterClose(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("unsubscribe should panic after intracom is closed")
+		}
+	}()
+
+	ic := New[bool]("test-intracom")
+
+	err := ic.Start()
+	if err != nil {
+		t.Errorf("intracom start error should be nilt: want nil, got %v", err)
+	}
+
+	topic := "test-topic"
+	group := "test-subscriber"
+
+	conf := &SubscriberConfig{
+		Topic:         topic,
+		ConsumerGroup: group,
+		BufferSize:    1,
+		BufferPolicy:  DropNone,
+	}
+
+	_, unsubscribe := ic.Subscribe(conf)
+
+	ic.Close()    // intracom becomes unusable, sending requests will panic
+	unsubscribe() // sending late request to unsubscribe
+
 }
 
 func TestLateSubscriberDuringSignalCancel(t *testing.T) {
@@ -239,18 +380,6 @@ func TestIntracomCloseWithoutUnsubscribing(t *testing.T) {
 }
 
 // Testing typed instance creations
-func TestNewBoolTyped(t *testing.T) {
-	ic := New[bool]("test-intracom")
-
-	want := reflect.TypeOf(new(Intracom[bool])).String()
-	got := reflect.TypeOf(ic).String()
-
-	if want != got {
-		t.Errorf("want %s: got %s", want, got)
-	}
-
-}
-
 func TestNewStringTyped(t *testing.T) {
 
 	ic := New[string]("test-intracom")
@@ -264,10 +393,11 @@ func TestNewStringTyped(t *testing.T) {
 
 }
 
-func TestNewIntTyped(t *testing.T) {
-	ic := New[int]("test-intracom")
+func TestNewByteTyped(t *testing.T) {
 
-	want := reflect.TypeOf(new(Intracom[int])).String()
+	ic := New[[]byte]("test-intracom")
+
+	want := reflect.TypeOf(new(Intracom[[]byte])).String()
 	got := reflect.TypeOf(ic).String()
 
 	if want != got {
@@ -276,11 +406,15 @@ func TestNewIntTyped(t *testing.T) {
 
 }
 
-func TestNewByteTyped(t *testing.T) {
+func TestNewCustomType(t *testing.T) {
+	type customType struct {
+		Name string
+		Age  int
+	}
 
-	ic := New[[]byte]("test-intracom")
+	ic := New[customType]("test-intracom")
 
-	want := reflect.TypeOf(new(Intracom[[]byte])).String()
+	want := reflect.TypeOf(new(Intracom[customType])).String()
 	got := reflect.TypeOf(ic).String()
 
 	if want != got {

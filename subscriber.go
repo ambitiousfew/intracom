@@ -1,6 +1,8 @@
 package intracom
 
-import "time"
+import (
+	"time"
+)
 
 type subscriber[T any] struct {
 	topic         string
@@ -38,11 +40,11 @@ func newSubscriber[T any](conf SubscriberConfig) *subscriber[T] {
 // how to handle the message.
 func (s *subscriber[T]) send(message T) {
 	switch s.bufferPolicy {
-	case DropNone:
+	case DropNone: // if the channel is full, block until there is space
 		select {
 		case <-s.stopC:
 			return
-		case s.ch <- message:
+		case s.ch <- message: // keep pushing until there is space
 		}
 		return
 
@@ -52,25 +54,25 @@ func (s *subscriber[T]) send(message T) {
 			return
 		case s.ch <- message:
 		default:
-			<-s.ch          // pop one
-			s.ch <- message // push one
+			select {
+			case <-s.ch: // pop one
+			case s.ch <- message: // push one
+			}
 			return
 		}
 
 	case DropOldestAfterTimeout:
+		s.timer.Reset(s.dropTimeout)
 		select {
 		case <-s.stopC:
 			return
 		case s.ch <- message:
-		default:
-			s.timer.Reset(s.dropTimeout)
+		case <-s.timer.C:
 			select {
-			case s.ch <- message: // try to push the message again
-			case <-s.timer.C: // if the timer expires, drop the oldest message
-				<-s.ch
-				s.ch <- message
-				return
+			case <-s.ch:
+			case s.ch <- message:
 			}
+			return
 		}
 
 	case DropNewest: // try to push the message, if the channel is full, drop the current message
@@ -83,21 +85,19 @@ func (s *subscriber[T]) send(message T) {
 		}
 
 	case DropNewestAfterTimeout:
+		s.timer.Reset(s.dropTimeout)
 		select {
 		case <-s.stopC:
 			return
-		case s.ch <- message:
-		default:
-			s.timer.Reset(s.dropTimeout)
+		case s.ch <- message: // try to push immediately
+		case <-s.timer.C: // timeout has elapsed
 			select {
-			case <-s.stopC:
+			case s.ch <- message: // try to push once more
 				return
-			case s.ch <- message:
-			case <-s.timer.C:
-				// do nothing
-				return
+			default: // channel still full, drop the current message
 			}
 		}
+
 	}
 }
 
@@ -111,6 +111,7 @@ func (s *subscriber[T]) close() {
 		s.timer.Stop()
 	}
 
+	s.closed = true
 	close(s.stopC)
 	close(s.ch)
 }

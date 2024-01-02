@@ -593,7 +593,7 @@ func (i *Intracom[T]) broadcaster(broadcastC <-chan any, publishC <-chan T, done
 				//  detach before requester cancels the consumer channel.
 				subscriber, found := subscribers[r.consumer]
 				if !found {
-					i.log.Debug(fmt.Sprintf("cannot unsubscribe consumer '%s' has not been subscribed", r.consumer))
+					// consumer group doesnt exist, so it must not be subscribed, its possible unregister was called first.
 					r.responseC <- struct{}{}
 					continue
 				}
@@ -637,8 +637,8 @@ func (i *Intracom[T]) broadcaster(broadcastC <-chan any, publishC <-chan T, done
 
 			for _, subscriber := range subscribers {
 				subscriber.send(msg)
-				// sub <- msg // send message to all subscribers
 			}
+
 			lastMsg = msg // store last message broadcasted
 		}
 
