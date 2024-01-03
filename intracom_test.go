@@ -210,12 +210,6 @@ func TestMultipleUnSubscribes(t *testing.T) {
 // if a subscriber tries to unsubscribe after intracom instance is closed.
 // Close() should always be called last, when you are done using intracom.
 func TestUnsubscribeAfterClose(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("unsubscribe should panic after intracom is closed")
-		}
-	}()
-
 	ic := New[bool]("test-intracom")
 
 	err := ic.Start()
@@ -235,7 +229,7 @@ func TestUnsubscribeAfterClose(t *testing.T) {
 
 	_, unsubscribe := ic.Subscribe(conf)
 
-	ic.Close()    // intracom becomes unusable, sending requests will panic
+	ic.Close()    // intracom becomes unusable, sending late unsubscribe no longer panics
 	unsubscribe() // sending late request to unsubscribe
 
 }
