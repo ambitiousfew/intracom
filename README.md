@@ -22,7 +22,8 @@ Calling `.Close()` on the intracom instance should **ALWAYS** be the last thing 
 This means it will likely exist at the top level, maybe even the main routine of your program. The intracom instance can be shared to many go routines for use but while keeping these in mind.
 1. Whoever creates the Intracom instance should be the who calls `.Start()` and the one who calls `.Close()`
 2. Because of #1, `.Start()` and `.Close()` are not thread-safe.
-3. If you do `.Close()` too early and have a late `unsubscribe` or `unregister` follow that up, you will likely experience a **panic on a closed channel** but this is expected behavior because the intracom instance is NO LONGER USABLE. The underlying channels are all closed, this includes the channels that handle the requests to subscribe, register, unsubscribe, and unregister.
+3. If you do `.Close()` too early and have a late `unsubscribe` or `unregister` follow that up, this would cause a **panic on a closed channel** but the bound function call just performed has a panic recovery implemented that will log at the ERROR level.
+4. If you attempt to `.Register()` or `.Subscribe()` after a `.Close()` has been initiated, you will experience a panic. This is expected as you should NOT be trying to continue using an unusable intracom instance.
 
 ### Duplicate Register calls
 Calling `.Register(<your-topic>)` against the same topic beyond the first time will always hand you back a reference to the already existing publishing channel as well as a callable function bound to that topic that when called will unregister that topic. Unregistering a topic will close all subscriber channels to that topic.

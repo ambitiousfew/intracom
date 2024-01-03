@@ -198,9 +198,8 @@ func (i *Intracom[T]) get(topic, consumer string) (<-chan T, bool) {
 // This function will return an error if the topic does not exist or the consumer group does not exist.
 // This can happen if the consumer group was never subscribed to the topic or the topic was unregistered before unsubscribing.
 //
-// NOTE: If this function is called, it must occur before intracom.Close() is called or it will panic sending on a closed channel.
-// The expectation here is that the parent routine managing the intracom instance will call Close() after all subscribers have been
-// unsubscribed. So just like Go channels, if you close a channel and then try to send on it, it will panic.
+// NOTE: If this function is executed after the Intracom instance has been closed, it would cause a panic
+// the panic will be recovered and logged at the error level, it is recommended to unsubscribe before closing the Intracom instance.
 //
 // Parameters:
 // - topic: name of the topic the subscriber is subscribed to
@@ -209,7 +208,13 @@ func (i *Intracom[T]) get(topic, consumer string) (<-chan T, bool) {
 // Returns:
 // - unsubscribe: a function bound to this subscription that can be used to unsubscribe the consumer group
 func (i *Intracom[T]) unsubscribe(topic, consumer string) func() {
+
 	return func() {
+		defer func() {
+			if r := recover(); r != nil {
+				i.log.Error("intracom recovering from unsubscribe panic, likely caused by closing intracom too early", "topic", topic, "consumer", consumer, "error", r)
+			}
+		}()
 		responseC := make(chan struct{})
 
 		i.requestC <- unsubscribeRequest[T]{ // send request
@@ -223,10 +228,23 @@ func (i *Intracom[T]) unsubscribe(topic, consumer string) func() {
 	}
 }
 
-// unregister returns a function bound to this topic that can be used to unregister the topic.
-// This function will return false if the topic does not exist.
+// unregister returns a fuction bound to given topic that can be used to unregister the topic.
+//
+// NOTE: If this function is executed after the Intracom instance has been closed, it would cause a panic
+// the panic will be recovered and logged at the error level, it is recommended to unsubscribe before closing the Intracom instance.
+//
+// Parameters:
+// - topic: name of the topic to bind to the returned function
+//
+// Returns:
+// - unregister: a function bound to this topic that can be used to unregister the topic and all of its subscribers
 func (i *Intracom[T]) unregister(topic string) func() {
 	return func() {
+		defer func() {
+			if r := recover(); r != nil {
+				i.log.Error("intracom recovering from unregister panic, likely caused by closing intracom too early", "topic", topic, "error", r)
+			}
+		}()
 		responseC := make(chan struct{})
 
 		i.requestC <- unregisterRequest{ // send request to unregister topic
