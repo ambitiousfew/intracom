@@ -110,17 +110,7 @@ func (i *Intracom[T]) Register(topic string) (chan<- T, func()) {
 // Returns:
 // - ch: the channel used to receive messages from the topic
 // - unsubscribe: a function bound to this subscription that can be used to unsubscribe the consumer group
-func (i *Intracom[T]) Subscribe(conf *SubscriberConfig) (<-chan T, func()) {
-	if conf == nil {
-		// cant allow nil consumer configs, default it if nil.
-		// TODO: log warning
-		conf = &SubscriberConfig{
-			Topic:         "",
-			ConsumerGroup: "",
-			BufferSize:    1,
-			BufferPolicy:  DropNone,
-		}
-	}
+func (i *Intracom[T]) Subscribe(conf SubscriberConfig) (<-chan T, func()) {
 	// Buffer size should always be at least 1
 	if conf.BufferSize < 1 {
 		conf.BufferSize = 1
@@ -129,7 +119,7 @@ func (i *Intracom[T]) Subscribe(conf *SubscriberConfig) (<-chan T, func()) {
 	responseC := make(chan subscribeResponse[T])
 
 	i.requestC <- subscribeRequest[T]{ // send subscribe request
-		conf:      *conf,
+		conf:      conf,
 		responseC: responseC,
 	}
 

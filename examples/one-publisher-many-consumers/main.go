@@ -41,7 +41,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		// subscribe to the topic with consumer1 name - worker 1
-		ch, _ := ic.Subscribe(&intracom.SubscriberConfig{
+		ch, _ := ic.Subscribe(intracom.SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "consumer1",
 			BufferSize:    1,
@@ -58,7 +58,7 @@ func main() {
 		// subscribe to the same topic with consumer1 - worker 2
 		defer wg.Done()
 
-		ch, _ := ic.Subscribe(&intracom.SubscriberConfig{
+		ch, _ := ic.Subscribe(intracom.SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "consumer1",
 			BufferSize:    1,
@@ -78,7 +78,7 @@ func main() {
 		// subscribe to the same topic with consumer2
 		defer wg.Done()
 
-		ch, _ := ic.Subscribe(&intracom.SubscriberConfig{
+		ch, _ := ic.Subscribe(intracom.SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "consumer2",
 			BufferSize:    1,

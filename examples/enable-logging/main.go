@@ -56,7 +56,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		// subscribe to the topic with consumer1 name - worker 1
-		ch, _ := ic.Subscribe(&intracom.SubscriberConfig{
+		ch, _ := ic.Subscribe(intracom.SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "consumer1",
 			BufferSize:    1,

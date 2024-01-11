@@ -61,7 +61,7 @@ func main() {
 		// launch a routuine that subscribes to the same topic
 		defer wg.Done()
 		// Create a consumer
-		consumer, unsubscribe := ic.Subscribe(&intracom.SubscriberConfig{
+		consumer, unsubscribe := ic.Subscribe(intracom.SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "consumer1",
 			BufferSize:    1,

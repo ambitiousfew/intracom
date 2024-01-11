@@ -119,7 +119,7 @@ func TestSubscribe(t *testing.T) {
 	topic := "test-topic"
 	group := "test-subscriber"
 
-	conf := &SubscriberConfig{
+	conf := SubscriberConfig{
 		Topic:         topic,
 		ConsumerGroup: group,
 		BufferSize:    1,
@@ -155,7 +155,7 @@ func TestUnsubscribe(t *testing.T) {
 	topic := "test-topic"
 	group := "test-subscriber"
 
-	conf := &SubscriberConfig{
+	conf := SubscriberConfig{
 		Topic:         topic,
 		ConsumerGroup: group,
 		BufferSize:    1,
@@ -194,7 +194,7 @@ func TestMultipleUnSubscribes(t *testing.T) {
 	topic := "test-topic"
 	group := "test-subscriber"
 
-	conf := &SubscriberConfig{
+	conf := SubscriberConfig{
 		Topic:         topic,
 		ConsumerGroup: group,
 		BufferSize:    1,
@@ -220,7 +220,7 @@ func TestUnsubscribeAfterClose(t *testing.T) {
 	topic := "test-topic"
 	group := "test-subscriber"
 
-	conf := &SubscriberConfig{
+	conf := SubscriberConfig{
 		Topic:         topic,
 		ConsumerGroup: group,
 		BufferSize:    1,
@@ -248,14 +248,14 @@ func TestLateSubscriberDuringSignalCancel(t *testing.T) {
 	group1 := "test-subscriber1"
 	group2 := "test-subscriber2"
 
-	conf1 := &SubscriberConfig{
+	conf1 := SubscriberConfig{
 		Topic:         topic,
 		ConsumerGroup: group1,
 		BufferSize:    1,
 		BufferPolicy:  DropNone,
 	}
 
-	conf2 := &SubscriberConfig{
+	conf2 := SubscriberConfig{
 		Topic:         topic,
 		ConsumerGroup: group2,
 		BufferSize:    1,
@@ -346,7 +346,7 @@ func TestIntracomCloseWithoutUnsubscribing(t *testing.T) {
 	topic := "test-topic"
 	group := "test-subscriber"
 
-	conf := &SubscriberConfig{
+	conf := SubscriberConfig{
 		Topic:         topic,
 		ConsumerGroup: group,
 		BufferSize:    1,
@@ -446,7 +446,7 @@ func BenchmarkIntracom(b *testing.B) {
 
 	go func() {
 		defer wg.Done()
-		sub1, unsubscribe := ic.Subscribe(&SubscriberConfig{
+		sub1, unsubscribe := ic.Subscribe(SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub1",
 			BufferSize:    10,
@@ -461,7 +461,7 @@ func BenchmarkIntracom(b *testing.B) {
 
 	go func() {
 		defer wg.Done()
-		sub2, unsubscribe := ic.Subscribe(&SubscriberConfig{
+		sub2, unsubscribe := ic.Subscribe(SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub2",
 			BufferSize:    10,
@@ -476,7 +476,7 @@ func BenchmarkIntracom(b *testing.B) {
 	go func() {
 		defer wg.Done()
 
-		sub3, unsubscribe := ic.Subscribe(&SubscriberConfig{
+		sub3, unsubscribe := ic.Subscribe(SubscriberConfig{
 			Topic:         topic,
 			ConsumerGroup: "sub3",
 			BufferSize:    10,
