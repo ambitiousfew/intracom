@@ -8,12 +8,12 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/ambitiousfew/intracom"
-	"golang.org/x/exp/slog"
 )
 
 func main() {

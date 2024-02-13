@@ -2,8 +2,7 @@ package intracom
 
 import (
 	"fmt"
-
-	"golang.org/x/exp/slog" // TODO: log/slog when moving to go1.21
+	"log/slog"
 )
 
 // Intracom is an in-memory pub/sub wrapper to enable communication between routines.
